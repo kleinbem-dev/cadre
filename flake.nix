@@ -60,8 +60,9 @@
         }:
         let
           upstream = inputs.nix-packages.packages.${system};
+          pick = name: pkgs.${name} or upstream.${name};
           # The agent stack, as far as it builds on this system.
-          stack = lib.filterAttrs (name: _: upstream ? ${name}) {
+          stack = lib.filterAttrs (name: _: pkgs ? ${name} || upstream ? ${name}) {
             mesh-llm = null;
             skippy = null;
             buzz-app = null;
@@ -72,11 +73,11 @@
             braindump = null;
           };
           cadre = pkgs.callPackage ./pkgs/cadre {
-            inherit (upstream) mesh-llm;
+            mesh-llm = pick "mesh-llm";
           };
         in
         {
-          packages = lib.mapAttrs (name: _: upstream.${name}) stack // {
+          packages = lib.mapAttrs (name: _: pick name) stack // {
             inherit cadre;
             mesh-agents = cadre;
             inherit (pkgs) goose-cli;

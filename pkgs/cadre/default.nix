@@ -18,7 +18,7 @@ writeShellApplication {
   text = builtins.readFile ./cadre.sh;
   meta = {
     description = "Private AI teammates on your own compute (Goose over local inference)";
-    homepage = "https://github.com/kleinbem/cadre";
+    homepage = "https://github.com/kleinbem-dev/cadre";
     license = lib.licenses.mit;
     mainProgram = "cadre";
     inherit (mesh-llm.meta) platforms;
