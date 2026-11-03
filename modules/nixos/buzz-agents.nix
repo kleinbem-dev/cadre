@@ -28,6 +28,15 @@ let
     ++ lib.optional (cfg.backend == "ollama") "qwen2.5-coder"
   );
 
+  agentModelLimits = lib.listToAttrs (
+    map (a: {
+      name = a.model;
+      value = a.contextLimit;
+    }) (lib.attrValues cfg.buzz.agents)
+  );
+
+  defaultLimit = if cfg.backend == "ollama" then 4096 else 32768;
+
   provider = (pkgs.formats.json { }).generate "cadre.json" {
     name = "cadre";
     display_name = "cadre local inference";
@@ -40,7 +49,7 @@ let
     timeout_seconds = 600;
     models = map (m: {
       name = m;
-      context_limit = 32768;
+      context_limit = agentModelLimits.${m} or defaultLimit;
     }) allModels;
   };
 
@@ -66,6 +75,13 @@ let
           Model for goose: with MeshLLM, "cadre" lets the backend pick;
           with Ollama, must match a model served by Ollama (defaults to "qwen2.5-coder").
         '';
+      };
+
+      contextLimit = lib.mkOption {
+        type = lib.types.int;
+        default = if cfg.backend == "ollama" then 4096 else 32768;
+        defaultText = lib.literalExpression ''if config.services.cadre.backend == "ollama" then 4096 else 32768'';
+        description = "Context limit in tokens exposed to Goose for compaction planning.";
       };
 
       owner = lib.mkOption {
