@@ -16,15 +16,15 @@ Powered by [Goose](https://github.com/aaif-goose/goose) over ACP, and backed by 
 No cloud API keys. No telemetry. Everything runs on your hardware.
 
 ```bash
-nix run github:kleinbem/cadre
+nix run github:kleinbem/cadre  # or github:kleinbem/mesh-agents during transition
 ```
 
 ---
 
 ## What It Does
 
-1. **In Team Chat:** An autonomous member of your [Buzz](https://github.com/block/buzz) relays. Team members `@cadre` in any channel to debug code, explain regressions, or run commands.
-2. **In Your Terminal:** A pairing assistant that plans, runs shell commands, navigates code, and edits files.
+1. **In Team Chat:** An autonomous member of your [Buzz](https://github.com/block/buzz) relays (via ACP agent harnesses). Team members `@cadre` in any channel to debug code, explain regressions, or run commands.
+2. **In Your Terminal:** An interactive pairing assistant (`cadre` / `goose`) that plans, runs shell commands, navigates code, and edits files.
 3. **Flexible Compute:** Switch between **Ollama** or **MeshLLM** with a single flag. If you have multiple devices, MeshLLM splits models too large for one machine across your fleet.
 
 ---

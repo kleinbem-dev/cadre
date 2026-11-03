@@ -13,7 +13,7 @@ Usage: cadre [OPTIONS]
 
 Options:
   --backend BACKEND  inference engine: auto | mesh | ollama (default: \$CADRE_BACKEND or auto)
-  --model MODEL      model to serve/use (default: \$CADRE_MODEL or Qwen3-8B-Q4_K_M for mesh, qwen2.5-coder for ollama)
+  --model MODEL      model to serve/use (default: \$CADRE_MODEL or \$MESH_AGENTS_MODEL or Qwen3-8B-Q4_K_M for mesh, qwen2.5-coder for ollama)
   --port PORT        API port to connect to (default: 9337 for mesh, 11434 for ollama)
   --join-file PATH   join your private mesh with the invite token in PATH (mesh backend only)
   -h, --help         show this help
@@ -21,18 +21,40 @@ EOF
 }
 
 backend=${CADRE_BACKEND:-auto}
-model=${CADRE_MODEL:-}
+model=${CADRE_MODEL:-${MESH_AGENTS_MODEL:-}}
 join_file=
 port=
 
 while [ $# -gt 0 ]; do
   case $1 in
-    --backend) backend=$2; shift 2 ;;
-    --model) model=$2; shift 2 ;;
-    --join-file) join_file=$2; shift 2 ;;
-    --port) port=$2; shift 2 ;;
-    -h | --help) usage; exit 0 ;;
-    *) usage >&2; exit 2 ;;
+    --backend)
+      [ $# -ge 2 ] || { usage >&2; exit 2; }
+      backend=$2
+      shift 2
+      ;;
+    --model)
+      [ $# -ge 2 ] || { usage >&2; exit 2; }
+      model=$2
+      shift 2
+      ;;
+    --join-file)
+      [ $# -ge 2 ] || { usage >&2; exit 2; }
+      join_file=$2
+      shift 2
+      ;;
+    --port)
+      [ $# -ge 2 ] || { usage >&2; exit 2; }
+      port=$2
+      shift 2
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
   esac
 done
 
@@ -41,10 +63,14 @@ export GOOSE_TELEMETRY_OFF=${GOOSE_TELEMETRY_OFF:-1}
 
 # Auto-detect running backend if not explicitly set
 if [ "$backend" = "auto" ]; then
-  if curl -fsS --max-time 1 "http://127.0.0.1:9337/v1/models" >/dev/null 2>&1; then
+  mesh_probe_port=${port:-9337}
+  ollama_probe_port=${port:-11434}
+  if curl -fsS --max-time 1 "http://127.0.0.1:$mesh_probe_port/v1/models" >/dev/null 2>&1; then
     backend="mesh"
-  elif curl -fsS --max-time 1 "http://127.0.0.1:11434/api/tags" >/dev/null 2>&1; then
+    port=$mesh_probe_port
+  elif curl -fsS --max-time 1 "http://127.0.0.1:$ollama_probe_port/api/tags" >/dev/null 2>&1; then
     backend="ollama"
+    port=$ollama_probe_port
   else
     backend="mesh"
   fi
@@ -61,7 +87,15 @@ if [ "$backend" = "ollama" ]; then
       OLLAMA_HOST="127.0.0.1:$port" ollama serve >/dev/null 2>&1 &
       ollama_pid=$!
       trap 'kill "$ollama_pid" 2>/dev/null; wait "$ollama_pid" 2>/dev/null' EXIT
-      sleep 2
+      
+      echo "Waiting for Ollama to become ready..."
+      until curl -fsS --max-time 1 "$api/api/tags" >/dev/null 2>&1; do
+        if ! kill -0 "$ollama_pid" 2>/dev/null; then
+          echo "Ollama stopped unexpectedly" >&2
+          exit 1
+        fi
+        sleep 1
+      done
     else
       echo "Ollama is not running on $api and 'ollama' binary was not found in PATH." >&2
       echo "Please start Ollama or specify --backend mesh." >&2
@@ -73,7 +107,7 @@ if [ "$backend" = "ollama" ]; then
   export OLLAMA_HOST="$api"
   export GOOSE_PROVIDER=ollama
   export GOOSE_MODEL="$model"
-  exec goose session --provider ollama --model "$model"
+  goose session --provider ollama --model "$model"
 
 elif [ "$backend" = "mesh" ]; then
   port=${port:-9337}
@@ -106,7 +140,11 @@ elif [ "$backend" = "mesh" ]; then
     done
   fi
 
-  exec mesh-llm goose --port "$port"
+  mesh_args=(--port "$port")
+  if [ -n "$model" ]; then
+    mesh_args+=(--model "$model")
+  fi
+  mesh-llm goose "${mesh_args[@]}"
 
 else
   echo "Unknown backend: $backend (valid: mesh, ollama, auto)" >&2

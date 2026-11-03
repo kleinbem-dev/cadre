@@ -21,6 +21,7 @@
 * **Header Logo (`assets/logo.svg`):** Widescreen banner for GitHub README headers and documentation.
 
 ### Palette
+
 | Role | Color Name | Hex Code | Purpose |
 | :--- | :--- | :--- | :--- |
 | **Canvas** | Deep Slate | `#0b0f19` | Dark mode terminal/readiness |
@@ -57,7 +58,7 @@ cadre ◈ private AI teammates on your own compute
 Usage: cadre [OPTIONS]
 
 Options:
-  --backend <ENGINE>  Inference runner: ollama | mesh | openai [default: auto]
+  --backend <ENGINE>  Inference runner: auto | mesh | ollama [default: auto]
   --model <MODEL>     Model to serve/query [default: Qwen3-8B-Q4_K_M]
   --port <PORT>       API port [default: 9337]
 ```

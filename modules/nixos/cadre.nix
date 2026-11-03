@@ -105,7 +105,10 @@ in
         (pkgs.cadre or pkgs.mesh-agents)
       ];
       # goose otherwise asks to share usage data, with yes preselected.
-      sessionVariables.GOOSE_TELEMETRY_OFF = lib.mkDefault "1";
+      sessionVariables = {
+        GOOSE_TELEMETRY_OFF = lib.mkDefault "1";
+        CADRE_BACKEND = lib.mkDefault cfg.backend;
+      };
     };
   };
 }

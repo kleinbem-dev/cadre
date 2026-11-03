@@ -113,7 +113,10 @@ in
           (stack.cadre or stack.mesh-agents)
         ];
         # goose otherwise asks to share usage data, with yes preselected.
-        home.sessionVariables.GOOSE_TELEMETRY_OFF = lib.mkDefault "1";
+        home.sessionVariables = {
+          GOOSE_TELEMETRY_OFF = lib.mkDefault "1";
+          CADRE_BACKEND = lib.mkDefault cfg.backend;
+        };
       })
 
       (lib.mkIf (cfg.backend == "mesh" && pkgs.stdenv.hostPlatform.isLinux) {
