@@ -214,7 +214,7 @@ if [ "$backend" = "ollama" ]; then
     export GOOSE_PROVIDER=cadre-ollama
     export GOOSE_MODEL="$model"
     berd "$@"
-    exit 0
+    exit $?
   fi
 
   echo "Starting cadre agent on Ollama ($model at $api)..."
@@ -289,7 +289,7 @@ elif [ "$backend" = "mesh" ]; then
     export GOOSE_PROVIDER=mesh
     export GOOSE_MODEL="$model"
     berd "$@"
-    exit 0
+    exit $?
   fi
 
   mesh_args=(--port "$port")
