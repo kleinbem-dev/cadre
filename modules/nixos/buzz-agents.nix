@@ -22,6 +22,12 @@ let
   baseUrl =
     if cfg.backend == "ollama" then "http://127.0.0.1:11434/v1" else "http://127.0.0.1:9337/v1";
 
+  allModels = lib.unique (
+    [ "cadre" ]
+    ++ lib.mapAttrsToList (_: a: a.model) cfg.buzz.agents
+    ++ lib.optional (cfg.backend == "ollama") "qwen2.5-coder"
+  );
+
   provider = (pkgs.formats.json { }).generate "cadre.json" {
     name = "cadre";
     display_name = "cadre local inference";
@@ -32,12 +38,10 @@ let
     requires_auth = false;
     supports_streaming = true;
     timeout_seconds = 600;
-    models = [
-      {
-        name = "cadre";
-        context_limit = 32768;
-      }
-    ];
+    models = map (m: {
+      name = m;
+      context_limit = 32768;
+    }) allModels;
   };
 
   agentModule = {
@@ -56,8 +60,12 @@ let
 
       model = lib.mkOption {
         type = lib.types.str;
-        default = "cadre";
-        description = "Model for goose: `cadre` lets the backend pick, or a name from `/v1/models`.";
+        default = if cfg.backend == "ollama" then "qwen2.5-coder" else "cadre";
+        defaultText = lib.literalExpression ''if config.services.cadre.backend == "ollama" then "qwen2.5-coder" else "cadre"'';
+        description = ''
+          Model for goose: with MeshLLM, "cadre" lets the backend pick;
+          with Ollama, must match a model served by Ollama (defaults to "qwen2.5-coder").
+        '';
       };
 
       owner = lib.mkOption {
