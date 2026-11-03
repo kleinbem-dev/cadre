@@ -22,36 +22,29 @@ let
   baseUrl =
     if cfg.backend == "ollama" then "http://127.0.0.1:11434/v1" else "http://127.0.0.1:9337/v1";
 
-  allModels = lib.unique (
-    [ "cadre" ]
-    ++ lib.mapAttrsToList (_: a: a.model) cfg.buzz.agents
-    ++ lib.optional (cfg.backend == "ollama") "qwen2.5-coder"
-  );
-
-  agentModelLimits = lib.listToAttrs (
-    map (a: {
-      name = a.model;
-      value = a.contextLimit;
-    }) (lib.attrValues cfg.buzz.agents)
-  );
-
-  defaultLimit = if cfg.backend == "ollama" then 4096 else 32768;
-
-  provider = (pkgs.formats.json { }).generate "cadre.json" {
-    name = "cadre";
-    display_name = "cadre local inference";
-    description = "Local inference via ${cfg.backend}";
-    engine = "openai";
-    base_url = baseUrl;
-    api_key_env = "";
-    requires_auth = false;
-    supports_streaming = true;
-    timeout_seconds = 600;
-    models = map (m: {
-      name = m;
-      context_limit = agentModelLimits.${m} or defaultLimit;
-    }) allModels;
-  };
+  agentProvider =
+    agent:
+    (pkgs.formats.json { }).generate "cadre.json" {
+      name = "cadre";
+      display_name = "cadre local inference";
+      description = "Local inference via ${cfg.backend}";
+      engine = "openai";
+      base_url = baseUrl;
+      api_key_env = "";
+      requires_auth = false;
+      supports_streaming = true;
+      timeout_seconds = 600;
+      models = [
+        {
+          name = agent.model;
+          context_limit = agent.contextLimit;
+        }
+      ]
+      ++ lib.optional (agent.model != "cadre") {
+        name = "cadre";
+        context_limit = agent.contextLimit;
+      };
+    };
 
   agentModule = {
     options = {
@@ -78,7 +71,7 @@ let
       };
 
       contextLimit = lib.mkOption {
-        type = lib.types.int;
+        type = lib.types.ints.positive;
         default = if cfg.backend == "ollama" then 4096 else 32768;
         defaultText = lib.literalExpression ''if config.services.cadre.backend == "ollama" then 4096 else 32768'';
         description = "Context limit in tokens exposed to Goose for compaction planning.";
@@ -146,7 +139,7 @@ let
         BUZZ_ACP_RESPOND_TO_ALLOWLIST = lib.concatStringsSep "," agent.allowlist;
       };
       script = ''
-        install -D -m 0644 ${provider} "$HOME/.config/goose/custom_providers/cadre.json"
+        install -D -m 0644 ${agentProvider agent} "$HOME/.config/goose/custom_providers/cadre.json"
         BUZZ_PRIVATE_KEY=$(< "$CREDENTIALS_DIRECTORY/key")
         export BUZZ_PRIVATE_KEY
         exec ${lib.getExe' pkgs.buzz-acp "buzz-acp"}
