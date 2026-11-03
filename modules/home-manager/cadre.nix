@@ -1,0 +1,155 @@
+# services.cadre for home-manager: private AI teammates on your own compute.
+# User service on any Linux (systemd) or macOS (launchd), NixOS or not.
+{ packages }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+
+let
+  cfg = config.services.cadre;
+  stack = packages.${pkgs.stdenv.hostPlatform.system};
+
+  configFile = (pkgs.formats.toml { }).generate "mesh-llm-config.toml" {
+    version = 1;
+    models = map (model: { inherit model; }) cfg.models;
+  };
+
+  node = pkgs.writeShellScript "cadre-mesh-node" ''
+    ${lib.optionalString (cfg.models != [ ]) ''
+      ${pkgs.coreutils}/bin/install -D -m 0600 ${configFile} "$HOME/.mesh-llm/config.toml"
+    ''}
+    exec ${
+      lib.escapeShellArgs (
+        [
+          (lib.getExe cfg.package)
+          "serve"
+          "--log-format"
+          "json"
+          "--bind-port"
+          (toString cfg.meshPort)
+        ]
+        ++ lib.optionals (cfg.joinFile != null) [
+          "--join-file"
+          cfg.joinFile
+        ]
+      )
+    }
+  '';
+in
+{
+  imports = [
+    (lib.mkAliasOptionModule [ "services" "mesh-agents" ] [ "services" "cadre" ])
+  ];
+
+  options.services.cadre = {
+    enable = lib.mkEnableOption "cadre: private AI teammates on your own compute";
+
+    backend = lib.mkOption {
+      type = lib.types.enum [
+        "mesh"
+        "ollama"
+      ];
+      default = "mesh";
+      description = "The local inference backend: mesh (MeshLLM) or ollama.";
+    };
+
+    package = lib.mkOption {
+      type = lib.types.package;
+      default = stack.mesh-llm;
+      defaultText = lib.literalExpression "cadre.packages.\${system}.mesh-llm";
+      description = "The MeshLLM package, with the native runtimes your GPU needs (when using mesh backend).";
+    };
+
+    models = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "Qwen3-8B-Q4_K_M" ];
+      description = ''
+        Models this node serves: names from catalog or paths to GGUF files.
+      '';
+    };
+
+    joinFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/run/user/1000/secrets/cadre-join";
+      description = ''
+        File with the mesh's invite token. `null` creates a mesh of its own:
+        the first node.
+      '';
+    };
+
+    meshPort = lib.mkOption {
+      type = lib.types.port;
+      default = 7842;
+      description = "UDP port for the mesh's traffic between nodes.";
+    };
+
+    autoStart = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Start the node at login. Off, start it by hand (`systemctl --user
+        start mesh-llm` or `launchctl start dev.kleinbem.cadre`): a big
+        model holds its memory as long as the node runs.
+      '';
+    };
+
+    goose.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Whether to install goose and cadre CLI, set up for the local node.";
+    };
+  };
+
+  config = lib.mkIf cfg.enable (
+    lib.mkMerge [
+      (lib.mkIf cfg.goose.enable {
+        home.packages = [
+          stack.goose-cli
+          (stack.cadre or stack.mesh-agents)
+        ];
+        # goose otherwise asks to share usage data, with yes preselected.
+        home.sessionVariables = {
+          GOOSE_TELEMETRY_OFF = lib.mkDefault "1";
+          CADRE_BACKEND = lib.mkDefault cfg.backend;
+        };
+      })
+
+      (lib.mkIf (cfg.backend == "mesh" && pkgs.stdenv.hostPlatform.isLinux) {
+        systemd.user.services.mesh-llm = {
+          Unit = {
+            Description = "MeshLLM node";
+            After = [ "network-online.target" ];
+          };
+          Service = {
+            ExecStart = "${node}";
+            Restart = "on-failure";
+            RestartSec = 5;
+          };
+          Install = lib.mkIf cfg.autoStart {
+            WantedBy = [ "default.target" ];
+          };
+        };
+      })
+
+      (lib.mkIf (cfg.backend == "mesh" && pkgs.stdenv.hostPlatform.isDarwin) {
+        launchd.agents.mesh-llm = {
+          enable = true;
+          config = {
+            ProgramArguments = [ "${node}" ];
+            RunAtLoad = cfg.autoStart;
+            KeepAlive = {
+              Crashed = true;
+            };
+            StandardOutPath = "/tmp/mesh-llm.log";
+            StandardErrorPath = "/tmp/mesh-llm.log";
+          };
+        };
+      })
+    ]
+  );
+}

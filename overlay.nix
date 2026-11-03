@@ -6,5 +6,6 @@ let
 in
 {
   inherit (upstream) mesh-llm mesh-llm-cuda mesh-llm-rocm;
-  mesh-agents = final.callPackage ./pkgs/mesh-agents { };
+  cadre = final.callPackage ./pkgs/cadre { };
+  mesh-agents = final.cadre;
 }

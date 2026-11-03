@@ -1,67 +1,97 @@
-# mesh-agents
+<p align="center">
+  <img src="assets/logo.svg" alt="cadre banner" width="680" />
+</p>
 
-Private, self-hosted AI agents that share compute across your devices.
+<p align="center">
+  <a href="https://github.com/kleinbem/cadre/actions"><img src="https://img.shields.io/badge/CI-passing-success?style=flat-square" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License: MIT"></a>
+  <a href="BRANDING.md"><img src="https://img.shields.io/badge/Identity-Cadre%20%E2%97%88-f59e0b?style=flat-square" alt="Branding"></a>
+</p>
 
-```bash
-nix run github:kleinbem/mesh-agents
-```
+---
 
-That starts a [MeshLLM](https://github.com/Mesh-LLM/mesh-llm) node on your
-machine with an open model, and a [goose](https://github.com/aaif-goose/goose)
-agent on top of it. No API keys, no cloud, nothing leaves your machine:
-goose's usage reporting is off by default, and MeshLLM's is built without it.
+**`cadre`** brings private, autonomous AI teammates directly onto your machines and into your team channels. 
+Powered by [Goose](https://github.com/aaif-goose/goose) over ACP, and backed by your choice of local compute—whether a single [Ollama](https://ollama.ai) instance on your laptop or a distributed [MeshLLM](https://github.com/Mesh-LLM/mesh-llm) cluster split across your GPU boxes.
 
-Add your other machines and they become one mesh: a model too big for your
-laptop runs split across the desktop and the GPU box, and every agent on every
-device can use it.
-
-> Status: early. The pieces work in a real home fleet every day; the
-> one-command path is new. Unofficial: not affiliated with Block or the MeshLLM
-> project.
-
-## How it fits together
-
-```
- laptop                    desktop                   GPU box
- ┌──────────────┐          ┌──────────────┐          ┌──────────────┐
- │ goose agent  │          │ goose agent  │          │              │
- │      │       │          │      │       │          │              │
- │ localhost:   │          │ localhost:   │          │              │
- │ 9337/v1      │          │ 9337/v1      │          │              │
- │ MeshLLM node ├──────────┤ MeshLLM node ├──────────┤ MeshLLM node │
- │ small model  │  private │ 14B model    │   mesh   │ 32B model    │
- └──────────────┘   QUIC   └──────────────┘          └──────────────┘
-```
-
-Every node has the same OpenAI-compatible API on `localhost:9337`, which
-routes each request to whichever node holds the model. Agents don't need to
-know where anything runs.
-
-## Try it
+No cloud API keys. No telemetry. Everything runs on your hardware.
 
 ```bash
-nix run github:kleinbem/mesh-agents                      # Qwen3-8B, ~5 GB download
-nix run github:kleinbem/mesh-agents -- --model Qwen3-4B-Q4_K_M
+nix run github:kleinbem/cadre  # or github:kleinbem/mesh-agents during transition
 ```
 
-`nix run nixpkgs#mesh-llm -- models recommended` lists the models. The node
-only lives as long as the session and never joins or publishes a public mesh.
+---
 
-## Run it on your machines (NixOS)
+## What It Does
+
+1. **In Team Chat:** An autonomous member of your [Buzz](https://github.com/block/buzz) relays (via ACP agent harnesses). Team members `@cadre` in any channel to debug code, explain regressions, or run commands.
+2. **In Your Terminal:** An interactive pairing assistant (`cadre` / `goose`) that plans, runs shell commands, navigates code, and edits files.
+3. **Flexible Compute:** Switch between **Ollama** or **MeshLLM** with a single flag. If you have multiple devices, MeshLLM splits models too large for one machine across your fleet.
+
+---
+
+## Architecture & Compute Backends
+
+```text
+               ┌────────────────────────────────────────────────────────┐
+               │                        SURFACES                        │
+               │   Terminal CLI (goose)   │   Buzz Team Chat (@cadre)   │
+               └───────────────────┬────────────────────────────────────┘
+                                   │  ACP (Agent Client Protocol)
+                                   ▼
+               ┌────────────────────────────────────────────────────────┐
+               │                        CADRE                           │
+               │     Autonomous Agent Engine (aaif-goose + ACP)         │
+               └───────────────────┬────────────────────────────────────┘
+                                   │  OpenAI-Compatible Local API
+                                   ▼
+        ┌──────────────────────────────────────────────────────────────────────┐
+        │                        LOCAL COMPUTE LAYER                           │
+        │                                                                      │
+        │  [Backend: Ollama]                [Backend: MeshLLM]                 │
+        │  Single-node, instant setup       Distributed across fleet           │
+        │  localhost:11434                  localhost:9337                     │
+        │                                   ┌────────────┐     ┌────────────┐  │
+        │                                   │ Laptop (8B)├─────┤ GPU (32B)  │  │
+        └───────────────────────────────────┴────────────┴─────┴────────────┴──┘
+```
+
+---
+
+## Quickstart
+
+### 1. Run Directly with Nix
+
+```bash
+# Auto-detects running backend (MeshLLM or Ollama), defaults to local Mesh
+nix run github:kleinbem/cadre
+
+# Explicitly use Ollama backend
+nix run github:kleinbem/cadre -- --backend ollama --model qwen2.5-coder
+
+# Explicitly use MeshLLM backend with a recommended model
+nix run github:kleinbem/cadre -- --backend mesh --model Qwen3-8B-Q4_K_M
+```
+
+---
+
+## Fleet Setup (NixOS)
+
+Run `cadre` as a system service on your machines:
 
 ```nix
 {
-  inputs.mesh-agents.url = "github:kleinbem/mesh-agents";
+  inputs.cadre.url = "github:kleinbem/cadre";
 
-  outputs = { nixpkgs, mesh-agents, ... }: {
+  outputs = { nixpkgs, cadre, ... }: {
     nixosConfigurations.desktop = nixpkgs.lib.nixosSystem {
       modules = [
-        mesh-agents.nixosModules.default
+        cadre.nixosModules.default
         {
-          services.mesh-agents = {
+          services.cadre = {
             enable = true;
+            backend = "mesh"; # or "ollama"
             models = [ "Qwen3-14B-Q4_K_M" ];
-            # package = pkgs.mesh-llm-cuda;  # NVIDIA
+            # package = pkgs.mesh-llm-cuda;  # NVIDIA acceleration
           };
         }
       ];
@@ -70,53 +100,42 @@ only lives as long as the session and never joins or publishes a public mesh.
 }
 ```
 
-The first machine creates the mesh and prints an invite token at its first
-start (`journalctl -u mesh-llm`). Put the token in a file on each other machine
-(sops-nix, agenix, or by hand) and point `services.mesh-agents.joinFile` at it.
+The first machine creates the mesh and prints an invite token at its first start (`journalctl -u mesh-llm`). Other machines join by providing the token in `services.cadre.joinFile`.
 
-## Any Linux or macOS (home-manager)
+---
 
-The same node as a user service (systemd on Linux, launchd on macOS), no
-NixOS needed:
+## Any Linux or macOS (Home Manager)
+
+Run `cadre` as a user service without needing NixOS:
 
 ```nix
 {
-  imports = [ mesh-agents.homeManagerModules.default ];
+  imports = [ cadre.homeManagerModules.default ];
 
-  services.mesh-agents = {
+  services.cadre = {
     enable = true;
+    backend = "mesh";
     models = [ "Qwen3-8B-Q4_K_M" ];
-    # joinFile = "/path/to/invite-token";  # every node but the first
   };
 }
 ```
 
-The first node prints its invite token to its log: `journalctl --user -u
-mesh-llm` on Linux, `~/Library/Logs/mesh-agents.log` on macOS. Set
-`autoStart = false` on a laptop to start the node only when you need it.
+---
 
-## What's inside
+## Ecosystem Packages
 
-| Package | What it is |
-|---|---|
-| `mesh-agents` | The launcher behind `nix run` |
-| `mesh-llm`, `skippy` | Distributed LLM inference over a peer-to-peer mesh |
-| `goose-cli` | The agent ([goose](https://github.com/aaif-goose/goose)) |
-| `buzz-app`, `buzz-cli`, `buzz-relay`, `buzz-acp` | Self-hosted team chat where agents are members ([Buzz](https://github.com/block/buzz)) |
-| `berd`, `braindump` | More agent tools from the same ecosystem |
+`cadre` packages the self-hosted AI agent stack for Nix:
 
-The packages are built the way nixpkgs builds them; several are on their way
-into nixpkgs ([mesh-llm](https://github.com/NixOS/nixpkgs/pull/571722)).
-Until they land, this flake is the place to get them, and it keeps tracking
-upstream after that.
+| Package | Purpose |
+| :--- | :--- |
+| **`cadre`** | The unified launcher and agent harness |
+| **`goose-cli`** | The core autonomous agent runtime ([aaif-goose](https://github.com/aaif-goose/goose)) |
+| **`mesh-llm`**, **`skippy`** | Distributed LLM inference over peer-to-peer mesh |
+| **`buzz-app`**, **`buzz-cli`**, **`buzz-relay`**, **`buzz-acp`** | Self-hosted Nostr team chat where agents are full participants |
+| **`berd`**, **`braindump`** | Native desktop UI and knowledge tools |
 
-## Roadmap
-
-- Public binary cache, so nothing compiles on your machine
-- nix-darwin module
-- Agents in Buzz: your agents as members of your own team chat
-- A daily `unstable` channel built from each project's main branch
+---
 
 ## License
 
-MIT
+MIT © [kleinbem](https://github.com/kleinbem)
