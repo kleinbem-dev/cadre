@@ -130,6 +130,7 @@ in
 
       (lib.mkIf (cfg.desktop.enable && pkgs.stdenv.hostPlatform.isLinux) {
         home.packages = lib.concatLists [
+          [ (stack.cadre or stack.mesh-agents) ]
           (lib.optional (stack ? berd) stack.berd)
           (lib.optional (stack ? buzz-app) stack.buzz-app)
         ];

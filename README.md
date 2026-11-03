@@ -61,6 +61,8 @@ nix run github:kleinbem-dev/cadre
 
 ### 1. Run Directly with Nix
 
+The `gui` and `chat` commands need `berd` and `buzz-app` (or `buzz-cli`) on `PATH`. The `cadre` package does not include heavy desktop applications by default. Make them available in your environment or install them via `services.cadre.desktop.enable`.
+
 ```bash
 # Terminal pairing assistant (Goose in CLI):
 nix run github:kleinbem-dev/cadre

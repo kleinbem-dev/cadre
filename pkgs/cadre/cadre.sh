@@ -213,7 +213,8 @@ if [ "$backend" = "ollama" ]; then
     echo "Opening Berd on Ollama with $model..."
     export GOOSE_PROVIDER=cadre-ollama
     export GOOSE_MODEL="$model"
-    exec berd
+    berd "$@"
+    exit 0
   fi
 
   echo "Starting cadre agent on Ollama ($model at $api)..."
@@ -287,7 +288,8 @@ elif [ "$backend" = "mesh" ]; then
     echo "Opening Berd on MeshLLM with $model..."
     export GOOSE_PROVIDER=mesh
     export GOOSE_MODEL="$model"
-    exec berd
+    berd "$@"
+    exit 0
   fi
 
   mesh_args=(--port "$port")
