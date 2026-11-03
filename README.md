@@ -16,7 +16,7 @@ Powered by [Goose](https://github.com/aaif-goose/goose) over ACP, and backed by 
 No cloud API keys. No telemetry. Everything runs on your hardware.
 
 ```bash
-nix run github:kleinbem/cadre  # or github:kleinbem/mesh-agents during transition
+nix run github:kleinbem-dev/cadre
 ```
 
 ---
@@ -80,7 +80,7 @@ Run `cadre` as a system service on your machines:
 
 ```nix
 {
-  inputs.cadre.url = "github:kleinbem/cadre";
+  inputs.cadre.url = "github:kleinbem-dev/cadre";
 
   outputs = { nixpkgs, cadre, ... }: {
     nixosConfigurations.desktop = nixpkgs.lib.nixosSystem {
@@ -92,6 +92,14 @@ Run `cadre` as a system service on your machines:
             backend = "mesh"; # or "ollama"
             models = [ "Qwen3-14B-Q4_K_M" ];
             # package = pkgs.mesh-llm-cuda;  # NVIDIA acceleration
+
+            # Deploy autonomous teammates into your Buzz team chat:
+            buzz.agents.dev = {
+              relayUrl = "wss://buzz.example.com";
+              privateKeyFile = "/run/secrets/buzz-cadre-key";
+              respondTo = "owner-only"; # or "allowlist", "anyone"
+              owner = "hex-pubkey-here";
+            };
           };
         }
       ];

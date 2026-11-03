@@ -34,6 +34,7 @@
             imports = [
               inputs.nix-packages.nixosModules.mesh-llm
               ./modules/nixos/cadre.nix
+              ./modules/nixos/buzz-agents.nix
             ];
             nixpkgs.overlays = [ inputs.self.overlays.default ];
           };
