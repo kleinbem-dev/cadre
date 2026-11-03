@@ -1,5 +1,5 @@
 {
-  description = "Private, self-hosted AI agents that share compute across your devices";
+  description = "Private AI teammates on your own compute (Goose over local inference: Ollama, MeshLLM)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -29,16 +29,24 @@
       flake = {
         overlays.default = import ./overlay.nix inputs;
 
-        nixosModules.default = {
-          imports = [
-            inputs.nix-packages.nixosModules.mesh-llm
-            ./modules/nixos/mesh-agents.nix
-          ];
-          nixpkgs.overlays = [ inputs.self.overlays.default ];
+        nixosModules = {
+          default = {
+            imports = [
+              inputs.nix-packages.nixosModules.mesh-llm
+              ./modules/nixos/cadre.nix
+            ];
+            nixpkgs.overlays = [ inputs.self.overlays.default ];
+          };
+          cadre = inputs.self.nixosModules.default;
+          mesh-agents = inputs.self.nixosModules.default;
         };
 
-        homeManagerModules.default = import ./modules/home-manager/mesh-agents.nix {
-          inherit (inputs.self) packages;
+        homeManagerModules = {
+          default = import ./modules/home-manager/cadre.nix {
+            inherit (inputs.self) packages;
+          };
+          cadre = inputs.self.homeManagerModules.default;
+          mesh-agents = inputs.self.homeManagerModules.default;
         };
       };
 
@@ -62,15 +70,16 @@
             berd = null;
             braindump = null;
           };
-          mesh-agents = pkgs.callPackage ./pkgs/mesh-agents {
+          cadre = pkgs.callPackage ./pkgs/cadre {
             inherit (upstream) mesh-llm;
           };
         in
         {
           packages = lib.mapAttrs (name: _: upstream.${name}) stack // {
-            inherit mesh-agents;
+            inherit cadre;
+            mesh-agents = cadre;
             inherit (pkgs) goose-cli;
-            default = mesh-agents;
+            default = cadre;
           };
 
           checks = lib.optionalAttrs pkgs.stdenv.isLinux {
