@@ -32,10 +32,10 @@ nix run github:kleinbem-dev/cadre
 ## Architecture & Compute Backends
 
 ```text
-               ┌────────────────────────────────────────────────────────┐
-               │                        SURFACES                        │
-               │   Terminal CLI (goose)   │   Buzz Team Chat (@cadre)   │
-               └───────────────────┬────────────────────────────────────┘
+               ┌────────────────────────────────────────────────────────────────────────┐
+               │                                SURFACES                                │
+               │  Terminal (cadre)  │  Desktop GUI (cadre gui)  │  Team Chat (cadre chat)│
+               └───────────────────────────────────┬────────────────────────────────────┘
                                    │  ACP (Agent Client Protocol)
                                    ▼
                ┌────────────────────────────────────────────────────────┐
@@ -61,15 +61,23 @@ nix run github:kleinbem-dev/cadre
 
 ### 1. Run Directly with Nix
 
+The `gui` and `chat` commands need `berd` and `buzz-app` (or `buzz-cli`) on `PATH`. The `cadre` package does not include heavy desktop applications by default. Make them available in your environment or install them via `services.cadre.desktop.enable`.
+
 ```bash
-# Auto-detects running backend (MeshLLM or Ollama), defaults to local Mesh
-nix run github:kleinbem/cadre
+# Terminal pairing assistant (Goose in CLI):
+nix run github:kleinbem-dev/cadre
 
-# Explicitly use Ollama backend
-nix run github:kleinbem/cadre -- --backend ollama --model qwen2.5-coder
+# Desktop GUI (Berd window on your local backend):
+nix run github:kleinbem-dev/cadre -- gui
 
-# Explicitly use MeshLLM backend with a recommended model
-nix run github:kleinbem/cadre -- --backend mesh --model Qwen3-8B-Q4_K_M
+# Team Chat (Buzz client):
+nix run github:kleinbem-dev/cadre -- chat
+
+# Explicitly use Ollama backend:
+nix run github:kleinbem-dev/cadre -- --backend ollama --model qwen2.5-coder
+
+# Explicitly use MeshLLM backend:
+nix run github:kleinbem-dev/cadre -- --backend mesh --model Qwen3-8B-Q4_K_M
 ```
 
 ---
@@ -89,6 +97,7 @@ Run `cadre` as a system service on your machines:
         {
           services.cadre = {
             enable = true;
+            desktop.enable = true; # installs Berd GUI and Buzz chat alongside CLI
             backend = "mesh"; # or "ollama"
             models = [ "Qwen3-14B-Q4_K_M" ];
             # package = pkgs.mesh-llm-cuda;  # NVIDIA acceleration
@@ -122,6 +131,7 @@ Run `cadre` as a user service without needing NixOS:
 
   services.cadre = {
     enable = true;
+    desktop.enable = true; # adds Cadre (Berd) and Cadre (Buzz) menu entries on Linux
     backend = "mesh";
     models = [ "Qwen3-8B-Q4_K_M" ];
   };

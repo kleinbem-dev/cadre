@@ -75,6 +75,15 @@ in
       default = true;
       description = "Whether to install goose and cadre CLI, set up for the local node.";
     };
+
+    desktop.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Whether to install Cadre desktop surfaces (Berd GUI and Buzz team chat)
+        alongside the CLI.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -99,16 +108,24 @@ in
       ];
     };
 
-    environment = lib.mkIf cfg.goose.enable {
-      systemPackages = [
-        pkgs.goose-cli
-        (pkgs.cadre or pkgs.mesh-agents)
-      ];
-      # goose otherwise asks to share usage data, with yes preselected.
-      sessionVariables = {
-        GOOSE_TELEMETRY_OFF = lib.mkDefault "1";
-        CADRE_BACKEND = lib.mkDefault cfg.backend;
-      };
-    };
+    environment = lib.mkMerge [
+      (lib.mkIf cfg.goose.enable {
+        systemPackages = [
+          pkgs.goose-cli
+          (pkgs.cadre or pkgs.mesh-agents)
+        ];
+        # goose otherwise asks to share usage data, with yes preselected.
+        sessionVariables = {
+          GOOSE_TELEMETRY_OFF = lib.mkDefault "1";
+          CADRE_BACKEND = lib.mkDefault cfg.backend;
+        };
+      })
+      (lib.mkIf cfg.desktop.enable {
+        systemPackages = lib.concatLists [
+          (lib.optional (pkgs ? berd) pkgs.berd)
+          (lib.optional (pkgs ? buzz-app) pkgs.buzz-app)
+        ];
+      })
+    ];
   };
 }

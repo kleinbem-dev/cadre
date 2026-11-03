@@ -103,6 +103,15 @@ in
       default = true;
       description = "Whether to install goose and cadre CLI, set up for the local node.";
     };
+
+    desktop.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Whether to install Cadre desktop surfaces (Berd GUI and Buzz team chat)
+        with desktop application menu entries.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable (
@@ -117,6 +126,39 @@ in
           GOOSE_TELEMETRY_OFF = lib.mkDefault "1";
           CADRE_BACKEND = lib.mkDefault cfg.backend;
         };
+      })
+
+      (lib.mkIf (cfg.desktop.enable && pkgs.stdenv.hostPlatform.isLinux) {
+        home.packages = lib.concatLists [
+          [ (stack.cadre or stack.mesh-agents) ]
+          (lib.optional (stack ? berd) stack.berd)
+          (lib.optional (stack ? buzz-app) stack.buzz-app)
+        ];
+        xdg.desktopEntries = lib.mkMerge [
+          (lib.optionalAttrs (stack ? berd) {
+            cadre-berd = {
+              name = "Cadre (Berd)";
+              comment = "Private AI teammates on desktop (Goose over local inference)";
+              exec = "cadre gui";
+              icon = "berd";
+              categories = [ "Development" ];
+              terminal = false;
+            };
+          })
+          (lib.optionalAttrs (stack ? buzz-app) {
+            cadre-buzz = {
+              name = "Cadre (Buzz)";
+              comment = "Buzz team chat with autonomous Cadre AI teammates";
+              exec = "cadre chat";
+              icon = "buzz";
+              categories = [
+                "Network"
+                "Chat"
+              ];
+              terminal = false;
+            };
+          })
+        ];
       })
 
       (lib.mkIf (cfg.backend == "mesh" && pkgs.stdenv.hostPlatform.isLinux) {
