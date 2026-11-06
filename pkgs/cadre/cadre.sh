@@ -53,8 +53,10 @@ esac
 
 backend=${CADRE_BACKEND:-auto}
 model=${CADRE_MODEL:-${MESH_AGENTS_MODEL:-}}
+model_explicit=${model:+1}
 join_file=
 port=
+extra_args=()
 
 while [ $# -gt 0 ]; do
   case $1 in
@@ -89,6 +91,7 @@ while [ $# -gt 0 ]; do
         exit 2
       }
       model=$2
+      model_explicit=1
       shift 2
       ;;
     --join-file)
@@ -111,9 +114,14 @@ while [ $# -gt 0 ]; do
       usage
       exit 0
       ;;
+    --)
+      shift
+      extra_args+=("$@")
+      break
+      ;;
     *)
-      usage >&2
-      exit 2
+      extra_args+=("$1")
+      shift
       ;;
   esac
 done
@@ -124,11 +132,11 @@ export GOOSE_TELEMETRY_OFF=${GOOSE_TELEMETRY_OFF:-1}
 # Chat subcommand launches Buzz client directly
 if [ "$subcommand" = "chat" ]; then
   if command -v buzz-app >/dev/null 2>&1; then
-    exec buzz-app "$@"
+    exec buzz-app "${extra_args[@]}"
   elif command -v buzz >/dev/null 2>&1; then
-    exec buzz "$@"
+    exec buzz "${extra_args[@]}"
   elif command -v buzz-cli >/dev/null 2>&1; then
-    exec buzz-cli "$@"
+    exec buzz-cli "${extra_args[@]}"
   else
     echo "Buzz is not installed; install 'buzz-app' or enable 'services.cadre.desktop.enable'." >&2
     exit 1
@@ -160,10 +168,10 @@ fi
 
 if [ "$backend" = "ollama" ]; then
   port=${port:-11434}
-  model=${model:-qwen2.5-coder}
   api="http://127.0.0.1:$port"
 
   if ! curl -fsS --max-time 2 "$api/api/tags" >/dev/null 2>&1; then
+    model=${model:-qwen2.5-coder}
     if command -v ollama >/dev/null 2>&1; then
       if [ "$subcommand" = "serve" ]; then
         echo "Starting Ollama daemon on port $port..."
@@ -188,6 +196,17 @@ if [ "$backend" = "ollama" ]; then
       echo "Please start Ollama or specify --backend mesh." >&2
       exit 1
     fi
+  else
+    if [ -z "$model_explicit" ]; then
+      tags=$(curl -fsS --max-time 2 "$api/api/tags" 2>/dev/null || true)
+      if [ -n "$tags" ]; then
+        first_tag=$(jq -r '.models[0].name // empty' <<<"$tags" 2>/dev/null || true)
+        if [ -n "$first_tag" ]; then
+          model="$first_tag"
+        fi
+      fi
+    fi
+    model=${model:-qwen2.5-coder}
   fi
 
   if [ "$subcommand" = "serve" ]; then
@@ -213,7 +232,7 @@ if [ "$backend" = "ollama" ]; then
     echo "Opening Berd on Ollama with $model..."
     export GOOSE_PROVIDER=cadre-ollama
     export GOOSE_MODEL="$model"
-    berd "$@"
+    berd "${extra_args[@]}"
     exit $?
   fi
 
@@ -221,11 +240,10 @@ if [ "$backend" = "ollama" ]; then
   export OLLAMA_HOST="$api"
   export GOOSE_PROVIDER=ollama
   export GOOSE_MODEL="$model"
-  goose session --provider ollama --model "$model"
+  goose session --provider ollama --model "$model" "${extra_args[@]}"
 
 elif [ "$backend" = "mesh" ]; then
   port=${port:-9337}
-  model=${model:-Qwen3-8B-Q4_K_M}
   api="http://127.0.0.1:$port/v1"
 
   served_models() {
@@ -233,6 +251,7 @@ elif [ "$backend" = "mesh" ]; then
   }
 
   if ! curl -fsS --max-time 2 "$api/models" >/dev/null 2>&1; then
+    model=${model:-Qwen3-8B-Q4_K_M}
     args=(serve --model "$model" --port "$port")
     if [ -n "$join_file" ]; then
       args+=(--join-file "$join_file")
@@ -257,6 +276,19 @@ elif [ "$backend" = "mesh" ]; then
       fi
       sleep 2
     done
+  else
+    # A node is already running. If the user did not specify a model explicitly,
+    # pick the model that the running node actually serves instead of forcing the default.
+    if [ -z "$model_explicit" ]; then
+      inventory=$(curl -fsS --max-time 2 "$api/models" 2>/dev/null || true)
+      if [ -n "$inventory" ]; then
+        first_model=$(jq -r '.data[0].id // empty' <<<"$inventory" 2>/dev/null || true)
+        if [ -n "$first_model" ]; then
+          model="$first_model"
+        fi
+      fi
+    fi
+    model=${model:-Qwen3-8B-Q4_K_M}
   fi
 
   if [ "$subcommand" = "serve" ]; then
@@ -264,39 +296,45 @@ elif [ "$backend" = "mesh" ]; then
     exit 0
   fi
 
-  if [ "$subcommand" = "gui" ]; then
-    inventory=$(curl -fsS --max-time 5 "$api/models" 2>/dev/null || true)
-    if [ -n "$inventory" ] && ! jq -e --arg m "$model" '.data[] | select(.id == $m)' <<<"$inventory" >/dev/null 2>&1; then
-      first_model=$(jq -r '.data[0].id // empty' <<<"$inventory" 2>/dev/null || true)
-      [ -n "$first_model" ] && model="$first_model"
+  inventory=$(curl -fsS --max-time 5 "$api/models" 2>/dev/null || true)
+  if [ -n "$inventory" ] && ! jq -e --arg m "$model" '.data[] | select(.id == $m)' <<<"$inventory" >/dev/null 2>&1; then
+    first_model=$(jq -r '.data[0].id // empty' <<<"$inventory" 2>/dev/null || true)
+    if [ -n "$first_model" ]; then
+      if [ -n "$model_explicit" ]; then
+        echo "Warning: model '$model' is not served on $api; using '$first_model' instead." >&2
+      fi
+      model="$first_model"
     fi
-    providers=${XDG_CONFIG_HOME:-$HOME/.config}/goose/custom_providers
-    mkdir -p "$providers"
-    jq -n --arg base "http://localhost:$port/v1" --arg model "$model" '{
-      name: "mesh",
-      engine: "openai",
-      display_name: "mesh-llm",
-      description: "Distributed LLM inference via mesh-llm",
-      api_key_env: "",
-      base_url: $base,
-      models: [{name: $model, context_limit: 32768}],
-      timeout_seconds: 600,
-      supports_streaming: true,
-      requires_auth: false,
-      nonce_header: "x-capsule-client-nonce"
-    }' >"$providers/mesh.json"
+  fi
+
+  providers=${XDG_CONFIG_HOME:-$HOME/.config}/goose/custom_providers
+  mkdir -p "$providers"
+  jq -n --arg base "http://localhost:$port/v1" --arg model "$model" '{
+    name: "mesh",
+    engine: "openai",
+    display_name: "mesh-llm",
+    description: "Distributed LLM inference via mesh-llm",
+    api_key_env: "",
+    base_url: $base,
+    models: [{name: $model, context_limit: 32768}],
+    timeout_seconds: 600,
+    supports_streaming: true,
+    requires_auth: false,
+    nonce_header: "x-capsule-client-nonce"
+  }' >"$providers/mesh.json"
+
+  if [ "$subcommand" = "gui" ]; then
     echo "Opening Berd on MeshLLM with $model..."
     export GOOSE_PROVIDER=mesh
     export GOOSE_MODEL="$model"
-    berd "$@"
+    berd "${extra_args[@]}"
     exit $?
   fi
 
-  mesh_args=(--port "$port")
-  if [ -n "$model" ]; then
-    mesh_args+=(--model "$model")
-  fi
-  mesh-llm goose "${mesh_args[@]}"
+  echo "Starting cadre agent on MeshLLM ($model at $api)..."
+  export GOOSE_PROVIDER=mesh
+  export GOOSE_MODEL="$model"
+  goose session --provider mesh --model "$model" "${extra_args[@]}"
 
 else
   echo "Unknown backend: $backend (valid: mesh, ollama, auto)" >&2

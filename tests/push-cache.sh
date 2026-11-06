@@ -11,6 +11,11 @@ weed_pid=
 cleanup() {
   if [ -n "$weed_pid" ]; then
     kill "$weed_pid" 2>/dev/null || true
+    for _ in $(seq 10); do
+      if ! kill -0 "$weed_pid" 2>/dev/null; then break; fi
+      sleep 0.1
+    done
+    kill -9 "$weed_pid" 2>/dev/null || true
     wait "$weed_pid" 2>/dev/null || true
   fi
   rm -rf "$work"
@@ -79,5 +84,8 @@ aws --endpoint-url "$endpoint" --region us-east-1 s3api head-object \
 # What users see: the bucket over plain HTTP (SeaweedFS serves it
 # anonymously, as the public domain serves R2) is a binary cache Nix accepts.
 nix store info --store "$endpoint/cache" >/dev/null || fail "Nix doesn't accept the bucket as a binary cache"
+
+# Calling with no targets exits cleanly
+"$push_cache" || fail "push-cache failed when called without arguments"
 
 echo "push-cache: ok"

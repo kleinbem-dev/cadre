@@ -53,7 +53,11 @@ in
         "ollama"
       ];
       default = "mesh";
-      description = "The local inference backend: mesh (MeshLLM) or ollama.";
+      description = ''
+        The local inference backend: mesh (MeshLLM) or ollama.
+        With Ollama, ensure your selected model is pulled before first launch
+        (e.g. `ollama pull qwen2.5-coder`).
+      '';
     };
 
     package = lib.mkOption {
@@ -68,7 +72,9 @@ in
       default = [ ];
       example = [ "Qwen3-8B-Q4_K_M" ];
       description = ''
-        Models this node serves: names from catalog or paths to GGUF files.
+        Models this node serves. For the mesh backend (`backend = "mesh"`),
+        names from MeshLLM's catalog or paths to GGUF files. For Ollama
+        (`backend = "ollama"`), model names pulled from Ollama (e.g. `[ "qwen2.5-coder" ]`).
       '';
     };
 
@@ -92,9 +98,10 @@ in
       type = lib.types.bool;
       default = true;
       description = ''
-        Start the node at login. Off, start it by hand (`systemctl --user
-        start mesh-llm` or `launchctl start dev.kleinbem.cadre`): a big
-        model holds its memory as long as the node runs.
+        Start the node at login. Off, start it by hand (for mesh: `systemctl --user
+        start mesh-llm` or `launchctl start org.nix-community.home.mesh-llm`;
+        for ollama: `systemctl --user start ollama` or `launchctl start org.nix-community.home.ollama`):
+        a big model holds its memory as long as the node runs.
       '';
     };
 
@@ -161,6 +168,13 @@ in
         ];
       })
 
+      (lib.mkIf (cfg.backend == "ollama") {
+        services.ollama.enable = lib.mkDefault true;
+        systemd.user.services.ollama.Install.WantedBy = lib.mkIf (!cfg.autoStart) (lib.mkForce [ ]);
+        launchd.agents.ollama.config.RunAtLoad = lib.mkIf (!cfg.autoStart) (lib.mkForce false);
+        launchd.agents.ollama.config.KeepAlive = lib.mkIf (!cfg.autoStart) (lib.mkForce false);
+      })
+
       (lib.mkIf (cfg.backend == "mesh" && pkgs.stdenv.hostPlatform.isLinux) {
         systemd.user.services.mesh-llm = {
           Unit = {
@@ -187,8 +201,8 @@ in
             KeepAlive = {
               Crashed = true;
             };
-            StandardOutPath = "/tmp/mesh-llm.log";
-            StandardErrorPath = "/tmp/mesh-llm.log";
+            StandardOutPath = "${config.home.homeDirectory}/Library/Logs/mesh-llm.log";
+            StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/mesh-llm.log";
           };
         };
       })

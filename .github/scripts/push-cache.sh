@@ -14,6 +14,11 @@
 # Args: the flake's packages to push, e.g. `.#mesh-llm .#skippy`.
 set -euo pipefail
 
+if [ $# -eq 0 ]; then
+  echo "Nothing to push (no targets specified)."
+  exit 0
+fi
+
 project=${CACHE_PROJECT:-${GITHUB_REPOSITORY#*/}}
 limit_bytes=$((8 * 1024 * 1024 * 1024))
 # Ask the bucket, not Nix's local memory of it: objects get deleted below.
@@ -50,17 +55,6 @@ printf '%s\n' "${closure[@]}" | xargs -P 16 -n 1 bash -c 'on_upstream "$1"' _ |
 mapfile -t push < <(comm -23 "$work/closure" "$work/upstream")
 echo "${#closure[@]} paths in the closure, ${#push[@]} not on cache.nixos.org"
 
-size=$(nix path-info --json "${push[@]}" | jq "[$infos | .narSize] | add // 0")
-echo "pushing $((size / 1024 / 1024)) MiB (uncompressed)"
-if [ "$size" -gt "$limit_bytes" ]; then
-  echo "refusing: over the $((limit_bytes / 1024 / 1024 / 1024)) GiB limit per project (R2's free tier is 10 GB for all)" >&2
-  exit 1
-fi
-
-# A binary cache only takes a path whose dependencies it already has, so the
-# whole closure goes up; the cleanup below drops what cache.nixos.org serves.
-nix copy --to "$store" "${push[@]}"
-
 # Nix won't use an HTTP cache without nix-cache-info ("does not appear to be
 # a binary cache"), and `nix copy` to S3 doesn't write one.
 if ! s3 head-object --bucket "$bucket" --key nix-cache-info >/dev/null 2>&1; then
@@ -69,11 +63,28 @@ if ! s3 head-object --bucket "$bucket" --key nix-cache-info >/dev/null 2>&1; the
     --content-type text/x-nix-cache-info >/dev/null
 fi
 
-# What the current build needs: its narinfos and their NARs.
-nix path-info --store "$CACHE_STORE" --json "${push[@]}" |
-  jq -r "$infos"' | (.path | ltrimstr("/nix/store/") | split("-")[0] + ".narinfo"), .url' |
-  sort -u >"$work/root"
-s3 put-object --bucket "$bucket" --key "roots/$project" --body "$work/root" >/dev/null
+if [ "${#push[@]}" -eq 0 ]; then
+  echo "All paths are already on cache.nixos.org; nothing to upload."
+  : >"$work/root"
+  s3 put-object --bucket "$bucket" --key "roots/$project" --body "$work/root" >/dev/null
+else
+  size=$(nix path-info --json "${push[@]}" | jq "[$infos | .narSize] | add // 0")
+  echo "pushing $((size / 1024 / 1024)) MiB (uncompressed)"
+  if [ "$size" -gt "$limit_bytes" ]; then
+    echo "refusing: over the $((limit_bytes / 1024 / 1024 / 1024)) GiB limit per project (R2's free tier is 10 GB for all)" >&2
+    exit 1
+  fi
+
+  # A binary cache only takes a path whose dependencies it already has, so the
+  # whole closure goes up; the cleanup below drops what cache.nixos.org serves.
+  nix copy --to "$store" "${push[@]}"
+
+  # What the current build needs: its narinfos and their NARs.
+  nix path-info --store "$CACHE_STORE" --json "${push[@]}" |
+    jq -r "$infos"' | (.path | ltrimstr("/nix/store/") | split("-")[0] + ".narinfo"), .url' |
+    sort -u >"$work/root"
+  s3 put-object --bucket "$bucket" --key "roots/$project" --body "$work/root" >/dev/null
+fi
 
 s3 list-objects-v2 --bucket "$bucket" --output json |
   jq -r '.Contents // [] | .[] | "\(.Key)\t\(.LastModified)"' >"$work/present"
