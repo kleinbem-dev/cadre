@@ -2,7 +2,7 @@
 # .github/scripts/push-cache.sh against a throwaway SeaweedFS S3: two projects
 # share the bucket, and a project's new push drops its own old build but
 # nothing another project's roots list. Needs nix, weed, aws, curl, jq.
-# Run: nix shell nixpkgs#seaweedfs nixpkgs#awscli2 -c tests/push-cache.sh
+# Run: nix shell --inputs-from . nixpkgs#seaweedfs nixpkgs#awscli2 nixpkgs#jq -c tests/push-cache.sh
 set -euo pipefail
 
 push_cache=$(realpath "$(dirname "$0")/../.github/scripts/push-cache.sh")
@@ -27,6 +27,7 @@ mkdir "$work/weed"
 weed server -ip=127.0.0.1 -ip.bind=127.0.0.1 -dir="$work/weed" -s3 -s3.port=$port -master.port=19333 \
   -volume.port=18080 -filer.port=18888 >"$work/weed.log" 2>&1 &
 weed_pid=$!
+# Dummy credentials: the throwaway S3 above accepts any.
 export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test
 endpoint=http://127.0.0.1:$port
 # The S3 port answers before the filer behind it is ready.

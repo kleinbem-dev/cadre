@@ -19,6 +19,10 @@ if [ $# -eq 0 ]; then
   exit 0
 fi
 
+: "${CACHE_STORE:?CACHE_STORE (the s3://… store URL) is not set}"
+: "${CACHE_SIGNING_KEY:?CACHE_SIGNING_KEY is not set}"
+: "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is not set}"
+: "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is not set}"
 project=${CACHE_PROJECT:-${GITHUB_REPOSITORY#*/}}
 limit_bytes=$((8 * 1024 * 1024 * 1024))
 # Ask the bucket, not Nix's local memory of it: objects get deleted below.
@@ -32,6 +36,7 @@ store="$CACHE_STORE&secret-key=$work/signing-key&compression=zstd"
 bucket=${CACHE_STORE#s3://}
 bucket=${bucket%%\?*}
 endpoint=$(sed -n 's/.*[?&]endpoint=\([^&]*\).*/\1/p' <<<"$CACHE_STORE")
+[ -n "$endpoint" ] || { echo "CACHE_STORE has no endpoint= parameter: $CACHE_STORE" >&2; exit 1; }
 s3() { aws --endpoint-url "$endpoint" --region auto s3api "$@"; }
 
 # `nix path-info --json` gives an array or, in newer Nix, an object keyed by
