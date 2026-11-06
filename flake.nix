@@ -39,7 +39,6 @@
             nixpkgs.overlays = [ inputs.self.overlays.default ];
           };
           cadre = inputs.self.nixosModules.default;
-          mesh-agents = inputs.self.nixosModules.default;
         };
 
         homeManagerModules = {
@@ -47,7 +46,6 @@
             inherit (inputs.self) packages;
           };
           cadre = inputs.self.homeManagerModules.default;
-          mesh-agents = inputs.self.homeManagerModules.default;
         };
       };
 
@@ -79,7 +77,6 @@
         {
           packages = lib.mapAttrs (name: _: pick name) stack // {
             inherit cadre;
-            mesh-agents = cadre;
             inherit (pkgs) goose-cli;
             default = cadre;
           };

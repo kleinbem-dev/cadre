@@ -40,10 +40,6 @@ let
   '';
 in
 {
-  imports = [
-    (lib.mkAliasOptionModule [ "services" "mesh-agents" ] [ "services" "cadre" ])
-  ];
-
   options.services.cadre = {
     enable = lib.mkEnableOption "cadre: private AI teammates on your own compute";
 
@@ -126,7 +122,7 @@ in
       (lib.mkIf cfg.goose.enable {
         home.packages = [
           stack.goose-cli
-          (stack.cadre or stack.mesh-agents)
+          stack.cadre
         ];
         # goose otherwise asks to share usage data, with yes preselected.
         home.sessionVariables = {
@@ -137,7 +133,7 @@ in
 
       (lib.mkIf (cfg.desktop.enable && pkgs.stdenv.hostPlatform.isLinux) {
         home.packages = lib.concatLists [
-          [ (stack.cadre or stack.mesh-agents) ]
+          [ stack.cadre ]
           (lib.optional (stack ? berd) stack.berd)
           (lib.optional (stack ? buzz-app) stack.buzz-app)
         ];

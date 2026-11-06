@@ -16,10 +16,6 @@ let
   cfg = config.services.cadre;
 in
 {
-  imports = [
-    (lib.mkAliasOptionModule [ "services" "mesh-agents" ] [ "services" "cadre" ])
-  ];
-
   options.services.cadre = {
     enable = lib.mkEnableOption "cadre: private AI teammates on your own compute";
 
@@ -123,7 +119,7 @@ in
       (lib.mkIf cfg.goose.enable {
         systemPackages = [
           pkgs.goose-cli
-          (pkgs.cadre or pkgs.mesh-agents)
+          pkgs.cadre
         ];
         # goose otherwise asks to share usage data, with yes preselected.
         sessionVariables = {

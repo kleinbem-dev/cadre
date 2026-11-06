@@ -10,7 +10,7 @@
 * **Glyph:** `◈` (the framed spark / white diamond)
 * **Mark:** `[ ◈ ]` (the corner frame enclosing autonomous intelligence)
 * **Tagline:** *Private AI teammates on your own compute.*
-* **Subtitle:** Self-hosted AI agents powered by Goose over ACP, backed by your choice of local inference (Ollama, Mesh-LLM, llama-server).
+* **Subtitle:** Self-hosted AI agents powered by Goose over ACP, backed by your choice of local inference (Ollama, Mesh-LLM).
 
 ---
 
@@ -52,7 +52,7 @@
 
 ### In the Terminal
 ```bash
-$ nix run github:kleinbem/cadre -- --help
+$ nix run github:kleinbem-dev/cadre -- --help
 cadre ◈ private AI teammates on your own compute
 
 Usage: cadre [OPTIONS]

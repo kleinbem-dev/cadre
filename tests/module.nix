@@ -26,7 +26,7 @@ let
 
   nixosOllama = pkgs.nixos {
     imports = [ module ];
-    services.mesh-agents = {
+    services.cadre = {
       enable = true;
       backend = "ollama";
       models = [ "qwen2.5-coder" ];
