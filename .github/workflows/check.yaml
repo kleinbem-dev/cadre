@@ -23,7 +23,8 @@ jobs:
         run: nix fmt -- --fail-on-change
       # The public cache users substitute from (cache.kleinbem.dev, shared
       # with other projects; kleinbem/nix infra/public-cache.tf): main's build
-      # replaces the previous one. Skipped until the secrets exist. No CUDA/ROCm variants:
+      # replaces the previous one. Skipped until vars.CACHE_STORE is set; set it
+      # with the secrets (push-cache.sh names a missing one). No CUDA/ROCm variants:
       # they'd outgrow the free tier, and GPU users build them once.
       - name: Push to the public cache
         if: github.event_name == 'push' && vars.CACHE_STORE != ''
@@ -35,7 +36,7 @@ jobs:
         run: |
           mapfile -t pkgs < <(nix eval --json .#packages.x86_64-linux --apply builtins.attrNames |
             jq -r '.[] | select(test("-(cuda|rocm)$") or . == "default" | not) | ".#\(.)"')
-          nix shell nixpkgs#awscli2 --command .github/scripts/push-cache.sh "${pkgs[@]}"
+          nix shell --inputs-from . nixpkgs#awscli2 --command .github/scripts/push-cache.sh "${pkgs[@]}"
 
   # push-cache.sh deletes from a bucket other projects share: run it against a
   # throwaway SeaweedFS S3 on every change.
@@ -49,4 +50,4 @@ jobs:
           persist-credentials: false
       - uses: kleinbem/actions/nix-setup@7ec628296d5194e6e10031706387b992a10a1638 # v1.0.1
       - name: push-cache.sh against a local S3
-        run: nix shell nixpkgs#seaweedfs nixpkgs#awscli2 nixpkgs#jq --command tests/push-cache.sh
+        run: nix shell --inputs-from . nixpkgs#seaweedfs nixpkgs#awscli2 nixpkgs#jq --command tests/push-cache.sh
