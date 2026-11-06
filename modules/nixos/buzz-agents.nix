@@ -57,7 +57,12 @@ let
       privateKeyFile = lib.mkOption {
         type = lib.types.externalPath;
         example = "/run/secrets/buzz-agent-key";
-        description = "File with the agent's Nostr secret key (`nsec1…` or hex).";
+        description = ''
+          File with the agent's Nostr secret key (`nsec1…` or hex). This MUST be a
+          dedicated, throwaway identity for this bot, never your personal Nostr key.
+          Because Goose runs with `GOOSE_MODE = "auto"` inside the service sandbox,
+          tools executed by the agent share its user environment and could read the key.
+        '';
       };
 
       model = lib.mkOption {
@@ -95,7 +100,12 @@ let
           "nobody"
         ];
         default = "owner-only";
-        description = "Whose messages the agent answers (buzz-acp's author gate).";
+        description = ''
+          Whose messages the agent answers (buzz-acp's author gate).
+          Defaults to `owner-only`. Warning: with `anyone` or `allowlist`, accepted
+          chat members can prompt the agent into executing tools without human approval,
+          and the service has network access and holds the agent's Nostr key.
+        '';
       };
 
       allowlist = lib.mkOption {
@@ -142,6 +152,7 @@ let
         install -D -m 0644 ${agentProvider agent} "$HOME/.config/goose/custom_providers/cadre.json"
         BUZZ_PRIVATE_KEY=$(< "$CREDENTIALS_DIRECTORY/key")
         export BUZZ_PRIVATE_KEY
+        unset CREDENTIALS_DIRECTORY
         exec ${lib.getExe' pkgs.buzz-acp "buzz-acp"}
       '';
       serviceConfig = {

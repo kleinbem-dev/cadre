@@ -84,7 +84,7 @@
             default = cadre;
           };
 
-          checks = lib.optionalAttrs pkgs.stdenv.isLinux {
+          checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             module = import ./tests/module.nix {
               inherit pkgs;
               module = inputs.self.nixosModules.default;

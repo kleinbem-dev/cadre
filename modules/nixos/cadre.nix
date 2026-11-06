@@ -29,7 +29,11 @@ in
         "ollama"
       ];
       default = "mesh";
-      description = "The local inference backend: mesh (MeshLLM) or ollama.";
+      description = ''
+        The local inference backend: mesh (MeshLLM) or ollama.
+        With Ollama, models configured in `services.cadre.models` are loaded
+        automatically via `services.ollama.loadModels`.
+      '';
     };
 
     package = lib.mkPackageOption pkgs "mesh-llm" {
@@ -42,9 +46,11 @@ in
       default = [ ];
       example = [ "Qwen3-8B-Q4_K_M" ];
       description = ''
-        Models this node serves into the mesh: names from MeshLLM's catalog
-        (`mesh-llm models recommended`, downloaded at the first start) or paths
-        to GGUF files. Empty serves none: the node only routes to the others.
+        Models this node serves. For the mesh backend (`backend = "mesh"`),
+        names from MeshLLM's catalog (`mesh-llm models recommended`, downloaded at
+        the first start) or paths to GGUF files. For Ollama (`backend = "ollama"`),
+        model names pulled from the Ollama library (e.g. `[ "qwen2.5-coder" ]`).
+        Empty serves none: in mesh mode, the node only routes to the others.
       '';
     };
 
@@ -87,6 +93,11 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    services.ollama = lib.mkIf (cfg.backend == "ollama") {
+      enable = lib.mkDefault true;
+      loadModels = lib.mkIf (cfg.models != [ ]) cfg.models;
+    };
+
     services.mesh-llm = lib.mkIf (cfg.backend == "mesh") {
       enable = true;
       inherit (cfg) package meshPort openFirewall;

@@ -23,6 +23,21 @@ let
   };
   unit = nixos.config.systemd.units."mesh-llm.service".unit;
   buzzUnit = nixos.config.systemd.units."cadre-buzz-helper.service".unit;
+
+  nixosOllama = pkgs.nixos {
+    imports = [ module ];
+    services.mesh-agents = {
+      enable = true;
+      backend = "ollama";
+      models = [ "qwen2.5-coder" ];
+    };
+    boot.loader.grub.enable = false;
+    fileSystems."/" = {
+      device = "none";
+      fsType = "tmpfs";
+    };
+    system.stateVersion = "26.05";
+  };
 in
 pkgs.runCommand "cadre-module" { } ''
   grep -q -- '--join-file %d/join' ${unit}/mesh-llm.service
@@ -32,5 +47,9 @@ pkgs.runCommand "cadre-module" { } ''
   test -x ${nixos.config.system.path}/bin/cadre
   test -x ${nixos.config.system.path}/bin/goose
   grep -q GOOSE_TELEMETRY_OFF ${nixos.config.system.build.setEnvironment}
+
+  # Ollama backend: enables services.ollama, no mesh-llm unit
+  test "${if nixosOllama.config.services.ollama.enable then "1" else "0"}" = "1"
+  test "${if (nixosOllama.config.services.mesh-llm.enable or false) then "1" else "0"}" = "0"
   touch $out
 ''
