@@ -19,7 +19,7 @@ Commands:
 
 Options:
   --backend BACKEND  inference engine: auto | mesh | ollama (default: \$CADRE_BACKEND or auto)
-  --model MODEL      model to serve/use (default: \$CADRE_MODEL or \$MESH_AGENTS_MODEL or Qwen3-8B-Q4_K_M for mesh, qwen2.5-coder for ollama)
+  --model MODEL      model to serve/use (default: \$CADRE_MODEL or Qwen3-8B-Q4_K_M for mesh, qwen2.5-coder for ollama)
   --port PORT        API port to connect to (default: 9337 for mesh, 11434 for ollama)
   --join-file PATH   join your private mesh with the invite token in PATH (mesh backend only)
   --app APP          alternate command selector: session | gui | chat | serve
@@ -52,7 +52,7 @@ case "${1:-}" in
 esac
 
 backend=${CADRE_BACKEND:-auto}
-model=${CADRE_MODEL:-${MESH_AGENTS_MODEL:-}}
+model=${CADRE_MODEL:-}
 model_explicit=${model:+1}
 join_file=
 port=

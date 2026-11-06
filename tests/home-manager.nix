@@ -37,7 +37,7 @@ let
           homeDirectory = "/home/bob";
           stateVersion = "26.05";
         };
-        services.mesh-agents = {
+        services.cadre = {
           enable = true;
           backend = "ollama";
         };

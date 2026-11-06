@@ -18,5 +18,4 @@ in
   berd = pick "berd";
   braindump = pick "braindump";
   cadre = final.callPackage ./pkgs/cadre { };
-  mesh-agents = final.cadre;
 }

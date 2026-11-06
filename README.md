@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/kleinbem/cadre/actions"><img src="https://img.shields.io/badge/CI-passing-success?style=flat-square" alt="CI"></a>
+  <a href="https://github.com/kleinbem-dev/cadre/actions/workflows/check.yaml"><img src="https://github.com/kleinbem-dev/cadre/actions/workflows/check.yaml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License: MIT"></a>
   <a href="BRANDING.md"><img src="https://img.shields.io/badge/Identity-Cadre%20%E2%97%88-f59e0b?style=flat-square" alt="Branding"></a>
 </p>
@@ -13,7 +13,7 @@
 **`cadre`** brings private, autonomous AI teammates directly onto your machines and into your team channels. 
 Powered by [Goose](https://github.com/aaif-goose/goose) over ACP, and backed by your choice of local compute—whether a single [Ollama](https://ollama.ai) instance on your laptop or a distributed [MeshLLM](https://github.com/Mesh-LLM/mesh-llm) cluster split across your GPU boxes.
 
-No cloud API keys. No telemetry. Everything runs on your hardware.
+No cloud API keys required. No telemetry. Inference runs entirely on your hardware (Buzz agents talk only to your configured relays and whatever network resources their tools access).
 
 ```bash
 nix run github:kleinbem-dev/cadre
@@ -23,7 +23,7 @@ nix run github:kleinbem-dev/cadre
 
 ## What It Does
 
-1. **In Team Chat:** An autonomous member of your [Buzz](https://github.com/block/buzz) relays (via ACP agent harnesses). Team members `@cadre` in any channel to debug code, explain regressions, or run commands.
+1. **In Team Chat:** An autonomous member of your [Buzz](https://github.com/block/buzz) relays (via ACP agent harnesses). Team members `@cadre` in channels to debug code, explain regressions, or run commands (defaults to owner-only authorization; configure `respondTo` for team allowlists or open channels).
 2. **In Your Terminal:** An interactive pairing assistant (`cadre` / `goose`) that plans, runs shell commands, navigates code, and edits files.
 3. **Flexible Compute:** Switch between **Ollama** or **MeshLLM** with a single flag. If you have multiple devices, MeshLLM splits models too large for one machine across your fleet.
 
