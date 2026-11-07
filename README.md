@@ -32,10 +32,10 @@ nix run github:kleinbem-dev/cadre
 ## Architecture & Compute Backends
 
 ```text
-               ┌────────────────────────────────────────────────────────────────────────┐
-               │                                SURFACES                                │
-               │  Terminal (cadre)  │  Desktop GUI (cadre gui)  │  Team Chat (cadre chat)│
-               └───────────────────────────────────┬────────────────────────────────────┘
+               ┌────────────────────────────────────────────────────────────────────────────────────────┐
+               │                                        SURFACES                                        │
+               │  Terminal (cadre)  │  Web Dashboard (cadre web)  │  Desktop (cadre gui)  │  Chat (cadre)│
+               └───────────────────────────────────────────┬────────────────────────────────────────────┘
                                    │  ACP (Agent Client Protocol)
                                    ▼
                ┌────────────────────────────────────────────────────────┐
@@ -66,6 +66,9 @@ The `gui` and `chat` commands need `berd` and `buzz-app` (or `buzz-cli`) on `PAT
 ```bash
 # Terminal pairing assistant (Goose in CLI):
 nix run github:kleinbem-dev/cadre
+
+# Web Dashboard (SvelteKit + web-config interface):
+nix run github:kleinbem-dev/cadre -- web
 
 # Desktop GUI (Berd window on your local backend):
 nix run github:kleinbem-dev/cadre -- gui

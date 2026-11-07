@@ -13,6 +13,7 @@ Usage: cadre [COMMAND] [OPTIONS]
 
 Commands:
   session            interactive pairing assistant in terminal (default)
+  web                open Cadre web dashboard in your browser
   gui, desktop, berd start Berd desktop app on the local backend
   chat, buzz         open Buzz team chat application
   serve              run the local inference node without opening a client
@@ -31,6 +32,10 @@ subcommand="session"
 case "${1:-}" in
   session)
     subcommand="session"
+    shift
+    ;;
+  web)
+    subcommand="web"
     shift
     ;;
   gui | desktop | berd)
@@ -67,6 +72,7 @@ while [ $# -gt 0 ]; do
       }
       case "$2" in
         session | goose) subcommand="session" ;;
+        web) subcommand="web" ;;
         gui | desktop | berd) subcommand="gui" ;;
         chat | buzz) subcommand="chat" ;;
         serve) subcommand="serve" ;;
@@ -151,6 +157,73 @@ if [ "$subcommand" = "gui" ]; then
   fi
 fi
 
+server_pid=""
+ollama_pid=""
+node=""
+
+cleanup() {
+  local sig="${1:-EXIT}"
+  if [ -n "$server_pid" ]; then
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+  fi
+  if [ -n "$ollama_pid" ]; then
+    kill "$ollama_pid" 2>/dev/null || true
+    wait "$ollama_pid" 2>/dev/null || true
+  fi
+  if [ -n "$node" ]; then
+    kill "$node" 2>/dev/null || true
+    wait "$node" 2>/dev/null || true
+  fi
+  if [ "$sig" != "EXIT" ]; then
+    trap - "$sig" EXIT
+    kill "-$sig" $$ 2>/dev/null || exit 1
+  fi
+}
+trap 'cleanup INT' INT
+trap 'cleanup TERM' TERM
+trap 'cleanup EXIT' EXIT
+
+# Launch Cadre Web dashboard (bundled static assets or dev server) and forward termination signals.
+launch_web() {
+  local backend_name="$1"
+  local model_name="$2"
+  local api_url="$3"
+  local status=0
+
+  web_dir="$(dirname "$(dirname "$(readlink -f "$0")")")/share/cadre/web"
+  if [ ! -d "$web_dir" ]; then
+    script_dir="$(dirname "$(readlink -f "$0")")"
+    repo_root="$(dirname "$(dirname "$script_dir")")"
+    if [ -d "$repo_root/web/build" ]; then
+      web_dir="$repo_root/web/build"
+    elif [ -d "$repo_root/web" ]; then
+      echo "Launching Cadre Web dev server (backend: $backend_name, model: $model_name on $api_url)..."
+      npm --prefix "$repo_root/web" run dev &
+      server_pid=$!
+      wait "$server_pid" || status=$?
+      server_pid=""
+      exit "$status"
+    fi
+  fi
+
+  if [ -d "$web_dir" ] && command -v python3 >/dev/null 2>&1; then
+    web_port=${CADRE_WEB_PORT:-8384}
+    echo "Serving Cadre Web on http://127.0.0.1:$web_port (backend: $backend_name, model: $model_name on $api_url)..."
+    if command -v xdg-open >/dev/null 2>&1; then
+      xdg-open "http://127.0.0.1:$web_port" >/dev/null 2>&1 &
+    fi
+    python3 -m http.server "$web_port" --directory "$web_dir" &
+    server_pid=$!
+    wait "$server_pid" || status=$?
+    server_pid=""
+    exit "$status"
+  fi
+
+  echo "Cadre Web assets not found. Run 'npm run build' inside web/ or use 'nix build .#web'." >&2
+  exit 1
+}
+
 # Auto-detect running backend if not explicitly set
 if [ "$backend" = "auto" ]; then
   mesh_probe_port=${port:-9337}
@@ -169,6 +242,40 @@ fi
 if [ "$backend" = "ollama" ]; then
   port=${port:-11434}
   api="http://127.0.0.1:$port"
+else
+  port=${port:-9337}
+  api="http://127.0.0.1:$port/v1"
+fi
+
+if [ "$subcommand" = "web" ]; then
+  if [ "$backend" = "ollama" ]; then
+    if [ -z "$model_explicit" ]; then
+      tags=$(curl -fsS --max-time 2 "$api/api/tags" 2>/dev/null || true)
+      if [ -n "$tags" ]; then
+        first_tag=$(jq -r '.models[0].name // empty' <<<"$tags" 2>/dev/null || true)
+        if [ -n "$first_tag" ]; then
+          model="$first_tag"
+        fi
+      fi
+    fi
+    model=${model:-qwen2.5-coder}
+    launch_web "ollama" "$model" "$api"
+  else
+    if [ -z "$model_explicit" ]; then
+      inventory=$(curl -fsS --max-time 2 "$api/models" 2>/dev/null || true)
+      if [ -n "$inventory" ]; then
+        first_model=$(jq -r '.data[0].id // empty' <<<"$inventory" 2>/dev/null || true)
+        if [ -n "$first_model" ]; then
+          model="$first_model"
+        fi
+      fi
+    fi
+    model=${model:-Qwen3-8B-Q4_K_M}
+    launch_web "mesh" "$model" "$api"
+  fi
+fi
+
+if [ "$backend" = "ollama" ]; then
 
   if ! curl -fsS --max-time 2 "$api/api/tags" >/dev/null 2>&1; then
     model=${model:-qwen2.5-coder}
@@ -181,7 +288,6 @@ if [ "$backend" = "ollama" ]; then
       echo "Starting local Ollama daemon on port $port..."
       OLLAMA_HOST="127.0.0.1:$port" ollama serve >/dev/null 2>&1 &
       ollama_pid=$!
-      trap 'kill "$ollama_pid" 2>/dev/null; wait "$ollama_pid" 2>/dev/null' EXIT
 
       echo "Waiting for Ollama to become ready..."
       until curl -fsS --max-time 1 "$api/api/tags" >/dev/null 2>&1; do
@@ -266,7 +372,6 @@ elif [ "$backend" = "mesh" ]; then
     echo "Starting a private MeshLLM node with $model (log: $state/mesh-llm.log)"
     mesh-llm "${args[@]}" >"$state/mesh-llm.log" 2>&1 &
     node=$!
-    trap 'kill "$node" 2>/dev/null; wait "$node" 2>/dev/null' EXIT
 
     echo "Waiting for the model; the first start downloads it."
     until [ -n "$(served_models)" ]; do
