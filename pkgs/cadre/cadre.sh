@@ -169,19 +169,22 @@ launch_web() {
     if [ -d "$repo_root/web/build" ]; then
       web_dir="$repo_root/web/build"
     elif [ -d "$repo_root/web" ]; then
-      echo "Launching Cadre Web dev server (backend: $backend_name on $api_url)..."
+      echo "Launching Cadre Web dev server (backend: $backend_name, model: $model_name on $api_url)..."
       exec npm --prefix "$repo_root/web" run dev
     fi
   fi
 
   if [ -d "$web_dir" ] && command -v python3 >/dev/null 2>&1; then
     web_port=${CADRE_WEB_PORT:-8384}
-    echo "Serving Cadre Web on http://127.0.0.1:$web_port (backend: $backend_name on $api_url)..."
+    echo "Serving Cadre Web on http://127.0.0.1:$web_port (backend: $backend_name, model: $model_name on $api_url)..."
     if command -v xdg-open >/dev/null 2>&1; then
       xdg-open "http://127.0.0.1:$web_port" >/dev/null 2>&1 &
     fi
     exec python3 -m http.server "$web_port" --directory "$web_dir"
   fi
+
+  echo "Cadre Web assets not found. Run 'npm run build' inside web/ or use 'nix build .#web'." >&2
+  exit 1
 }
 
 # Auto-detect running backend if not explicitly set
@@ -249,7 +252,6 @@ if [ "$backend" = "ollama" ]; then
 
   if [ "$subcommand" = "web" ]; then
     launch_web "ollama" "$model" "$api"
-    exit $?
   fi
 
   if [ "$subcommand" = "gui" ]; then
@@ -363,7 +365,6 @@ elif [ "$backend" = "mesh" ]; then
 
   if [ "$subcommand" = "web" ]; then
     launch_web "mesh" "$model" "$api"
-    exit $?
   fi
 
   if [ "$subcommand" = "gui" ]; then
