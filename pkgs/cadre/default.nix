@@ -26,9 +26,13 @@
     mainProgram = "cadre";
     inherit (mesh-llm.meta) platforms;
   };
-}).overrideAttrs (old: lib.optionalAttrs (web != null) {
-  buildCommand = old.buildCommand + ''
-    mkdir -p $out/share/cadre/web
-    cp -r ${web}/* $out/share/cadre/web/
-  '';
-})
+}).overrideAttrs
+  (
+    old:
+    lib.optionalAttrs (web != null) {
+      buildCommand = old.buildCommand + ''
+        mkdir -p $out/share/cadre/web
+        cp -r ${web}/* $out/share/cadre/web/
+      '';
+    }
+  )
