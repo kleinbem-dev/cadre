@@ -5,15 +5,18 @@
   goose-cli,
   jq,
   mesh-llm,
+  python3,
+  web ? null,
 }:
 
-writeShellApplication {
+(writeShellApplication {
   name = "cadre";
   runtimeInputs = [
     curl
     goose-cli
     jq
     mesh-llm
+    python3
   ];
   text = builtins.readFile ./cadre.sh;
   meta = {
@@ -23,4 +26,9 @@ writeShellApplication {
     mainProgram = "cadre";
     inherit (mesh-llm.meta) platforms;
   };
-}
+}).overrideAttrs (old: lib.optionalAttrs (web != null) {
+  buildCommand = old.buildCommand + ''
+    mkdir -p $out/share/cadre/web
+    cp -r ${web}/* $out/share/cadre/web/
+  '';
+})

@@ -13,6 +13,7 @@
 	} = $props();
 
 	let inputText = $state('');
+	let timelineEl = $state<HTMLDivElement | null>(null);
 
 	function handleSend() {
 		const text = inputText.trim();
@@ -22,11 +23,17 @@
 	}
 
 	function handleKeyDown(e: KeyboardEvent) {
-		if (e.key === 'Enter' && !e.shiftKey) {
+		if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
 			e.preventDefault();
 			handleSend();
 		}
 	}
+
+	$effect(() => {
+		if (messages.length && timelineEl) {
+			timelineEl.scrollTop = timelineEl.scrollHeight;
+		}
+	});
 </script>
 
 <div class="flex flex-col h-[calc(100vh-12rem)] min-h-[500px] rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/40 shadow-xs overflow-hidden">
@@ -52,7 +59,7 @@
 	</div>
 
 	<!-- Message Timeline -->
-	<div class="flex-1 overflow-y-auto p-5 space-y-4">
+	<div bind:this={timelineEl} class="flex-1 overflow-y-auto p-5 space-y-4">
 		{#each messages as msg (msg.id)}
 			{#if msg.role === 'thought'}
 				<!-- Thinking / Chain of Thought Accordion -->

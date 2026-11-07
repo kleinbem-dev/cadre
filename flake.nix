@@ -70,9 +70,6 @@
             berd = null;
             braindump = null;
           };
-          cadre = pkgs.callPackage ./pkgs/cadre {
-            mesh-llm = pick "mesh-llm";
-          };
           web = pkgs.buildNpmPackage {
             pname = "cadre-web";
             version = "0.1.0";
@@ -83,6 +80,10 @@
               mkdir -p $out
               cp -r build/* $out/
             '';
+          };
+          cadre = pkgs.callPackage ./pkgs/cadre {
+            mesh-llm = pick "mesh-llm";
+            inherit web;
           };
         in
         {
