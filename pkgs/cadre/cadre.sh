@@ -242,6 +242,40 @@ fi
 if [ "$backend" = "ollama" ]; then
   port=${port:-11434}
   api="http://127.0.0.1:$port"
+else
+  port=${port:-9337}
+  api="http://127.0.0.1:$port/v1"
+fi
+
+if [ "$subcommand" = "web" ]; then
+  if [ "$backend" = "ollama" ]; then
+    if [ -z "$model_explicit" ]; then
+      tags=$(curl -fsS --max-time 2 "$api/api/tags" 2>/dev/null || true)
+      if [ -n "$tags" ]; then
+        first_tag=$(jq -r '.models[0].name // empty' <<<"$tags" 2>/dev/null || true)
+        if [ -n "$first_tag" ]; then
+          model="$first_tag"
+        fi
+      fi
+    fi
+    model=${model:-qwen2.5-coder}
+    launch_web "ollama" "$model" "$api"
+  else
+    if [ -z "$model_explicit" ]; then
+      inventory=$(curl -fsS --max-time 2 "$api/models" 2>/dev/null || true)
+      if [ -n "$inventory" ]; then
+        first_model=$(jq -r '.data[0].id // empty' <<<"$inventory" 2>/dev/null || true)
+        if [ -n "$first_model" ]; then
+          model="$first_model"
+        fi
+      fi
+    fi
+    model=${model:-Qwen3-8B-Q4_K_M}
+    launch_web "mesh" "$model" "$api"
+  fi
+fi
+
+if [ "$backend" = "ollama" ]; then
 
   if ! curl -fsS --max-time 2 "$api/api/tags" >/dev/null 2>&1; then
     model=${model:-qwen2.5-coder}
@@ -284,10 +318,6 @@ if [ "$backend" = "ollama" ]; then
   if [ "$subcommand" = "serve" ]; then
     echo "Ollama is already running on $api."
     exit 0
-  fi
-
-  if [ "$subcommand" = "web" ]; then
-    launch_web "ollama" "$model" "$api"
   fi
 
   if [ "$subcommand" = "gui" ]; then
@@ -380,10 +410,6 @@ elif [ "$backend" = "mesh" ]; then
       fi
       model="$first_model"
     fi
-  fi
-
-  if [ "$subcommand" = "web" ]; then
-    launch_web "mesh" "$model" "$api"
   fi
 
   providers=${XDG_CONFIG_HOME:-$HOME/.config}/goose/custom_providers
