@@ -90,7 +90,9 @@
 									<div class="p-2.5 rounded-lg bg-zinc-900 dark:bg-zinc-950 text-zinc-200 font-mono text-xs overflow-x-auto">
 										<div class="flex items-center justify-between text-zinc-400 text-[10px] mb-1">
 											<span>tool: {tc.tool}</span>
-											<span class="text-emerald-400">✓ {tc.status}</span>
+											<span class={tc.status === 'failed' ? 'text-rose-400' : tc.status === 'running' ? 'text-amber-400' : 'text-emerald-400'}>
+												{tc.status === 'failed' ? '✗' : tc.status === 'running' ? '…' : '✓'} {tc.status}
+											</span>
 										</div>
 										{#if tc.input}
 											<div class="text-amber-400">$ {tc.input}</div>

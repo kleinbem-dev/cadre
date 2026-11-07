@@ -170,7 +170,8 @@ launch_web() {
       web_dir="$repo_root/web/build"
     elif [ -d "$repo_root/web" ]; then
       echo "Launching Cadre Web dev server (backend: $backend_name, model: $model_name on $api_url)..."
-      exec npm --prefix "$repo_root/web" run dev
+      npm --prefix "$repo_root/web" run dev
+      return $?
     fi
   fi
 
@@ -180,7 +181,8 @@ launch_web() {
     if command -v xdg-open >/dev/null 2>&1; then
       xdg-open "http://127.0.0.1:$web_port" >/dev/null 2>&1 &
     fi
-    exec python3 -m http.server "$web_port" --directory "$web_dir"
+    python3 -m http.server "$web_port" --directory "$web_dir"
+    return $?
   fi
 
   echo "Cadre Web assets not found. Run 'npm run build' inside web/ or use 'nix build .#web'." >&2
