@@ -13,6 +13,7 @@ Usage: cadre [COMMAND] [OPTIONS]
 
 Commands:
   session            interactive pairing assistant in terminal (default)
+  web                open Cadre web dashboard in your browser
   gui, desktop, berd start Berd desktop app on the local backend
   chat, buzz         open Buzz team chat application
   serve              run the local inference node without opening a client
@@ -31,6 +32,10 @@ subcommand="session"
 case "${1:-}" in
   session)
     subcommand="session"
+    shift
+    ;;
+  web)
+    subcommand="web"
     shift
     ;;
   gui | desktop | berd)
@@ -67,6 +72,7 @@ while [ $# -gt 0 ]; do
       }
       case "$2" in
         session | goose) subcommand="session" ;;
+        web) subcommand="web" ;;
         gui | desktop | berd) subcommand="gui" ;;
         chat | buzz) subcommand="chat" ;;
         serve) subcommand="serve" ;;
@@ -151,6 +157,33 @@ if [ "$subcommand" = "gui" ]; then
   fi
 fi
 
+launch_web() {
+  local backend_name="$1"
+  local model_name="$2"
+  local api_url="$3"
+
+  web_dir="$(dirname "$(dirname "$(readlink -f "$0")")")/share/cadre/web"
+  if [ ! -d "$web_dir" ]; then
+    script_dir="$(dirname "$(readlink -f "$0")")"
+    repo_root="$(dirname "$(dirname "$script_dir")")"
+    if [ -d "$repo_root/web/build" ]; then
+      web_dir="$repo_root/web/build"
+    elif [ -d "$repo_root/web" ]; then
+      echo "Launching Cadre Web dev server (backend: $backend_name on $api_url)..."
+      exec npm --prefix "$repo_root/web" run dev
+    fi
+  fi
+
+  if [ -d "$web_dir" ] && command -v python3 >/dev/null 2>&1; then
+    web_port=${CADRE_WEB_PORT:-8384}
+    echo "Serving Cadre Web on http://127.0.0.1:$web_port (backend: $backend_name on $api_url)..."
+    if command -v xdg-open >/dev/null 2>&1; then
+      xdg-open "http://127.0.0.1:$web_port" >/dev/null 2>&1 &
+    fi
+    exec python3 -m http.server "$web_port" --directory "$web_dir"
+  fi
+}
+
 # Auto-detect running backend if not explicitly set
 if [ "$backend" = "auto" ]; then
   mesh_probe_port=${port:-9337}
@@ -212,6 +245,11 @@ if [ "$backend" = "ollama" ]; then
   if [ "$subcommand" = "serve" ]; then
     echo "Ollama is already running on $api."
     exit 0
+  fi
+
+  if [ "$subcommand" = "web" ]; then
+    launch_web "ollama" "$model" "$api"
+    exit $?
   fi
 
   if [ "$subcommand" = "gui" ]; then
@@ -322,6 +360,11 @@ elif [ "$backend" = "mesh" ]; then
     requires_auth: false,
     nonce_header: "x-capsule-client-nonce"
   }' >"$providers/mesh.json"
+
+  if [ "$subcommand" = "web" ]; then
+    launch_web "mesh" "$model" "$api"
+    exit $?
+  fi
 
   if [ "$subcommand" = "gui" ]; then
     echo "Opening Berd on MeshLLM with $model..."
