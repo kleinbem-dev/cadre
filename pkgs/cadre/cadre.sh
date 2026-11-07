@@ -349,6 +349,10 @@ elif [ "$backend" = "mesh" ]; then
     fi
   fi
 
+  if [ "$subcommand" = "web" ]; then
+    launch_web "mesh" "$model" "$api"
+  fi
+
   providers=${XDG_CONFIG_HOME:-$HOME/.config}/goose/custom_providers
   mkdir -p "$providers"
   jq -n --arg base "http://localhost:$port/v1" --arg model "$model" '{
@@ -364,10 +368,6 @@ elif [ "$backend" = "mesh" ]; then
     requires_auth: false,
     nonce_header: "x-capsule-client-nonce"
   }' >"$providers/mesh.json"
-
-  if [ "$subcommand" = "web" ]; then
-    launch_web "mesh" "$model" "$api"
-  fi
 
   if [ "$subcommand" = "gui" ]; then
     echo "Opening Berd on MeshLLM with $model..."

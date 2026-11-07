@@ -32,7 +32,7 @@
 			</div>
 
 			<div class="flex items-center gap-1.5 shrink-0">
-				<StatusDot status={agent.status === 'busy' ? 'checking' : 'healthy'} size="sm" pulse={agent.status === 'busy'} />
+				<StatusDot status={agent.status === 'busy' ? 'checking' : agent.status === 'offline' ? 'down' : 'healthy'} size="sm" pulse={agent.status === 'busy'} />
 				<span class="text-[10px] font-mono text-zinc-400 uppercase tracking-wider">{agent.status}</span>
 			</div>
 		</div>

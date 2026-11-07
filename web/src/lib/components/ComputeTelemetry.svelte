@@ -117,7 +117,7 @@
 								<div class="w-full bg-zinc-100 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden">
 									<div
 										class="bg-amber-500 h-full rounded-full"
-										style="width: {(node.vramUsedGb / node.vramTotalGb) * 100}%"
+										style="width: {Math.min(100, Math.round((node.vramUsedGb / Math.max(1, node.vramTotalGb)) * 100))}%"
 									></div>
 								</div>
 							</div>
@@ -126,7 +126,9 @@
 
 					<div class="mt-4 pt-3 border-t border-zinc-100 dark:border-zinc-800/60 flex items-center justify-between text-[11px] text-zinc-400 font-mono">
 						<span>Peer ID: {node.id}</span>
-						<span class="text-emerald-500">Online</span>
+						<span class={node.status === 'healthy' ? 'text-emerald-500' : node.status === 'down' ? 'text-red-500' : 'text-amber-500'}>
+							{node.status === 'healthy' ? 'Online' : node.status}
+						</span>
 					</div>
 				</div>
 			{/each}
