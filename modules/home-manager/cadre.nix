@@ -10,7 +10,11 @@
 
 let
   cfg = config.services.cadre;
-  stack = packages.${pkgs.stdenv.hostPlatform.system};
+  # The user's pkgs first: our flake's packages are built without the host's
+  # overlays, so they miss its fixes and holds.
+  stack = lib.mapAttrs (
+    name: package: pkgs.${name} or package
+  ) packages.${pkgs.stdenv.hostPlatform.system};
 
   configFile = (pkgs.formats.toml { }).generate "mesh-llm-config.toml" {
     version = 1;
