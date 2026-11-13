@@ -100,10 +100,17 @@ Run `cadre` as a system service on your machines:
         {
           services.cadre = {
             enable = true;
+            autoStart = true; # or false on workstations so idle memory doesn't starve builds
             desktop.enable = true; # installs Berd GUI and Buzz chat alongside CLI
             backend = "mesh"; # or "ollama"
             models = [ "Qwen3-14B-Q4_K_M" ];
             # package = pkgs.mesh-llm-cuda;  # NVIDIA acceleration
+
+            # Host the Cadre web dashboard daemon:
+            web = {
+              enable = true;
+              port = 8384;
+            };
 
             # Deploy autonomous teammates into your Buzz team chat:
             buzz.agents.dev = {
@@ -150,6 +157,7 @@ Run `cadre` as a user service without needing NixOS:
 | Package | Purpose |
 | :--- | :--- |
 | **`cadre`** | The unified launcher and agent harness |
+| **`cadre-web`** | The web surface and telemetry cockpit for Cadre |
 | **`goose-cli`** | The core autonomous agent runtime ([aaif-goose](https://github.com/aaif-goose/goose)) |
 | **`mesh-llm`**, **`skippy`** | Distributed LLM inference over peer-to-peer mesh |
 | **`buzz-app`**, **`buzz-cli`**, **`buzz-relay`**, **`buzz-acp`** | Self-hosted Nostr team chat where agents are full participants |

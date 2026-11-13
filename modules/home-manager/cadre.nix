@@ -21,6 +21,39 @@ let
     models = map (model: { inherit model; }) cfg.models;
   };
 
+  baseUrl =
+    if cfg.backend == "ollama" then "http://127.0.0.1:11434/v1" else "http://127.0.0.1:9337/v1";
+
+  defaultModel =
+    if cfg.models != [ ] then
+      builtins.head cfg.models
+    else if cfg.backend == "ollama" then
+      "qwen2.5-coder"
+    else
+      "Qwen3-8B-Q4_K_M";
+
+  providerConfig = {
+    name = "cadre";
+    engine = "openai";
+    display_name = "cadre local inference";
+    description = "Local inference via ${cfg.backend}";
+    api_key_env = "";
+    base_url = baseUrl;
+    models = [
+      {
+        name = defaultModel;
+        context_limit = if cfg.backend == "ollama" then 4096 else 32768;
+      }
+    ]
+    ++ lib.optional (cfg.backend != "ollama" && defaultModel != "cadre") {
+      name = "cadre";
+      context_limit = if cfg.backend == "ollama" then 4096 else 32768;
+    };
+    timeout_seconds = 600;
+    supports_streaming = true;
+    requires_auth = false;
+  };
+
   node = pkgs.writeShellScript "cadre-mesh-node" ''
     ${lib.optionalString (cfg.models != [ ]) ''
       ${pkgs.coreutils}/bin/install -D -m 0600 ${configFile} "$HOME/.mesh-llm/config.toml"
@@ -132,6 +165,9 @@ in
         home.sessionVariables = {
           GOOSE_TELEMETRY_OFF = lib.mkDefault "1";
           CADRE_BACKEND = lib.mkDefault cfg.backend;
+        };
+        xdg.configFile = {
+          "goose/custom_providers/cadre.json".text = builtins.toJSON providerConfig;
         };
       })
 
