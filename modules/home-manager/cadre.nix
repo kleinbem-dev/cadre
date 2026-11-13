@@ -45,7 +45,7 @@ let
         context_limit = if cfg.backend == "ollama" then 4096 else 32768;
       }
     ]
-    ++ lib.optional (defaultModel != "cadre") {
+    ++ lib.optional (cfg.backend != "ollama" && defaultModel != "cadre") {
       name = "cadre";
       context_limit = if cfg.backend == "ollama" then 4096 else 32768;
     };
