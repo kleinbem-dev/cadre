@@ -1,7 +1,6 @@
 @import "tailwindcss";
 
 /* Scan web-config components for Tailwind utilities */
-@source "../../web-config";
 @source "../node_modules/@kleinbem/web-config";
 
 @import "@kleinbem/web-config/theme";
