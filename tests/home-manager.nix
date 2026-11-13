@@ -76,12 +76,20 @@ pkgs.runCommand "cadre-home-manager" { } ''
   test -x ${files}/home-path/bin/goose
   grep -q "GOOSE_TELEMETRY_OFF=\"1\"" ${files}/home-path/etc/profile.d/hm-session-vars.sh
 
+  # Goose custom provider provisioned declaratively (mesh.json left to runtime writer)
+  test -f ${files}/home-files/.config/goose/custom_providers/cadre.json
+  grep -q '"name":"cadre"' ${files}/home-files/.config/goose/custom_providers/cadre.json
+  test ! -f ${files}/home-files/.config/goose/custom_providers/mesh.json
+
   # Ollama backend: enables ollama service via alias, no mesh-llm unit
   ollamaUnit=${filesOllama}/home-files/.config/systemd/user/ollama.service
   test -f $ollamaUnit
   grep -q 'WantedBy=default.target' $ollamaUnit
   test ! -f ${filesOllama}/home-files/.config/systemd/user/mesh-llm.service
   test -x ${filesOllama}/home-path/bin/cadre
+  test -f ${filesOllama}/home-files/.config/goose/custom_providers/cadre.json
+  grep -q '"name":"cadre"' ${filesOllama}/home-files/.config/goose/custom_providers/cadre.json
+  test ! -f ${filesOllama}/home-files/.config/goose/custom_providers/mesh.json
 
   # Ollama backend with autoStart = false: unit exists without WantedBy
   ollamaNoAutoUnit=${filesOllamaNoAutoStart}/home-files/.config/systemd/user/ollama.service

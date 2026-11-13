@@ -72,6 +72,50 @@ in
       description = "Whether to open the mesh port for the other nodes.";
     };
 
+    autoStart = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Start the backend at boot. Off, it starts only by hand
+        (e.g. `systemctl start mesh-llm` or `systemctl start ollama`):
+        on a workstation, a big model's memory otherwise sits in swap all day.
+      '';
+    };
+
+    extraArgs = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "Extra arguments for `mesh-llm serve` (when using mesh backend).";
+    };
+
+    web = {
+      enable = lib.mkEnableOption "the Cadre web dashboard service";
+
+      port = lib.mkOption {
+        type = lib.types.port;
+        default = 8384;
+        description = "Port to serve the Cadre web dashboard on.";
+      };
+
+      listenAddress = lib.mkOption {
+        type = lib.types.str;
+        default = "0.0.0.0";
+        example = "127.0.0.1";
+        description = "Listen IP address for the web dashboard.";
+      };
+
+      openFirewall = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Whether to open the web dashboard port in the firewall.";
+      };
+
+      package = lib.mkPackageOption pkgs "cadre-web" {
+        default = [ "cadre-web" ];
+        extraDescription = "The built Cadre web dashboard static package.";
+      };
+    };
+
     goose.enable = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -93,6 +137,12 @@ in
       enable = lib.mkDefault true;
       loadModels = lib.mkIf (cfg.models != [ ]) cfg.models;
     };
+    systemd.services.ollama.wantedBy = lib.mkIf (cfg.backend == "ollama" && !cfg.autoStart) (
+      lib.mkForce [ ]
+    );
+    systemd.services.ollama-model-loader.wantedBy = lib.mkIf (
+      cfg.backend == "ollama" && !cfg.autoStart
+    ) (lib.mkForce [ ]);
 
     services.mesh-llm = lib.mkIf (cfg.backend == "mesh") {
       enable = true;
@@ -103,16 +153,62 @@ in
       };
       # The service's user can't read a file only root can, so systemd reads
       # it as a credential.
-      extraArgs = lib.optionals (cfg.joinFile != null) [
-        "--join-file"
-        "%d/join"
+      extraArgs =
+        lib.optionals (cfg.joinFile != null) [
+          "--join-file"
+          "%d/join"
+        ]
+        ++ cfg.extraArgs;
+    };
+
+    systemd.services.mesh-llm = lib.mkIf (cfg.backend == "mesh") {
+      wantedBy = lib.mkIf (!cfg.autoStart) (lib.mkForce [ ]);
+      serviceConfig.LoadCredential = lib.mkIf (cfg.joinFile != null) [
+        "join:${cfg.joinFile}"
       ];
     };
 
-    systemd.services.mesh-llm = lib.mkIf (cfg.backend == "mesh" && cfg.joinFile != null) {
-      serviceConfig.LoadCredential = [
-        "join:${cfg.joinFile}"
-      ];
+    networking.firewall.allowedTCPPorts = lib.mkIf (cfg.web.enable && cfg.web.openFirewall) [
+      cfg.web.port
+    ];
+
+    systemd.services.cadre-web = lib.mkIf cfg.web.enable {
+      description = "Cadre web dashboard";
+      after = [ "network.target" ];
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        ExecStart = "${pkgs.python3}/bin/python3 -m http.server ${toString cfg.web.port} --bind ${cfg.web.listenAddress} --directory ${cfg.web.package}";
+        Restart = "on-failure";
+        RestartSec = 5;
+        DynamicUser = true;
+        CapabilityBoundingSet = "";
+        LockPersonality = true;
+        NoNewPrivileges = true;
+        PrivateDevices = true;
+        PrivateTmp = true;
+        ProtectClock = true;
+        ProtectControlGroups = true;
+        ProtectHome = true;
+        ProtectHostname = true;
+        ProtectKernelLogs = true;
+        ProtectKernelModules = true;
+        ProtectKernelTunables = true;
+        ProtectProc = "invisible";
+        ProtectSystem = "strict";
+        RestrictAddressFamilies = [
+          "AF_INET"
+          "AF_INET6"
+          "AF_UNIX"
+        ];
+        RestrictNamespaces = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        SystemCallArchitectures = "native";
+        SystemCallFilter = [
+          "@system-service"
+          "~@privileged"
+        ];
+      };
     };
 
     environment = lib.mkMerge [

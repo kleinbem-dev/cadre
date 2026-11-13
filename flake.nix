@@ -70,17 +70,7 @@
             berd = null;
             braindump = null;
           };
-          web = pkgs.buildNpmPackage {
-            pname = "cadre-web";
-            version = "0.1.0";
-            src = ./web;
-            npmDeps = pkgs.importNpmLock { npmRoot = ./web; };
-            npmConfigHook = pkgs.importNpmLock.npmConfigHook;
-            installPhase = ''
-              mkdir -p $out
-              cp -r build/* $out/
-            '';
-          };
+          web = pkgs.callPackage ./pkgs/web { };
           cadre = pkgs.callPackage ./pkgs/cadre {
             mesh-llm = pick "mesh-llm";
             inherit web;
@@ -89,6 +79,7 @@
         {
           packages = lib.mapAttrs (name: _: pick name) stack // {
             inherit cadre web;
+            cadre-web = web;
             inherit (pkgs) goose-cli;
             default = cadre;
           };

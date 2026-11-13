@@ -323,18 +323,20 @@ if [ "$backend" = "ollama" ]; then
   if [ "$subcommand" = "gui" ]; then
     providers=${XDG_CONFIG_HOME:-$HOME/.config}/goose/custom_providers
     mkdir -p "$providers"
-    jq -n --arg base "http://127.0.0.1:$port/v1" --arg model "$model" '{
-      name: "cadre-ollama",
-      engine: "openai",
-      display_name: "Ollama (cadre)",
-      description: "Local inference via Ollama",
-      api_key_env: "",
-      base_url: $base,
-      models: [{name: $model, context_limit: 4096}],
-      timeout_seconds: 600,
-      supports_streaming: true,
-      requires_auth: false
-    }' >"$providers/cadre-ollama.json"
+    if [ ! -L "$providers/cadre-ollama.json" ]; then
+      jq -n --arg base "http://127.0.0.1:$port/v1" --arg model "$model" '{
+        name: "cadre-ollama",
+        engine: "openai",
+        display_name: "Ollama (cadre)",
+        description: "Local inference via Ollama",
+        api_key_env: "",
+        base_url: $base,
+        models: [{name: $model, context_limit: 4096}],
+        timeout_seconds: 600,
+        supports_streaming: true,
+        requires_auth: false
+      }' >"$providers/cadre-ollama.json"
+    fi
     echo "Opening Berd on Ollama with $model..."
     export GOOSE_PROVIDER=cadre-ollama
     export GOOSE_MODEL="$model"
@@ -414,19 +416,21 @@ elif [ "$backend" = "mesh" ]; then
 
   providers=${XDG_CONFIG_HOME:-$HOME/.config}/goose/custom_providers
   mkdir -p "$providers"
-  jq -n --arg base "http://localhost:$port/v1" --arg model "$model" '{
-    name: "mesh",
-    engine: "openai",
-    display_name: "mesh-llm",
-    description: "Distributed LLM inference via mesh-llm",
-    api_key_env: "",
-    base_url: $base,
-    models: [{name: $model, context_limit: 32768}],
-    timeout_seconds: 600,
-    supports_streaming: true,
-    requires_auth: false,
-    nonce_header: "x-capsule-client-nonce"
-  }' >"$providers/mesh.json"
+  if [ ! -L "$providers/mesh.json" ]; then
+    jq -n --arg base "http://localhost:$port/v1" --arg model "$model" '{
+      name: "mesh",
+      engine: "openai",
+      display_name: "mesh-llm",
+      description: "Distributed LLM inference via mesh-llm",
+      api_key_env: "",
+      base_url: $base,
+      models: [{name: $model, context_limit: 32768}],
+      timeout_seconds: 600,
+      supports_streaming: true,
+      requires_auth: false,
+      nonce_header: "x-capsule-client-nonce"
+    }' >"$providers/mesh.json"
+  fi
 
   if [ "$subcommand" = "gui" ]; then
     echo "Opening Berd on MeshLLM with $model..."
