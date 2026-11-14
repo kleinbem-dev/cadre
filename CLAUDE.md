@@ -7,10 +7,12 @@ user-visible change.
 | Path | What lives here |
 |---|---|
 | `flake.nix` | Packages (the stack, re-exported), `nixosModules.default`, `homeManagerModules.default`, `overlays.default`, checks, treefmt. |
-| `pkgs/cadre/` | The `nix run` launcher: starts or connects to MeshLLM or Ollama backend for Goose and Berd, or launches Buzz client directly. |
+| `package.nix` | `nixpkgs`-ready `cadre-ai` package (`mainProgram = "cadre"`, `passthru.web`, `passthru.tests.cli`, `nix-update-script`). |
+| `pkgs/cadre/` | `cadre.sh` launcher and stdlib `server.py` static SPA + local-inference status/chat server. |
+| `web/` | Svelte 5 + Tailwind CSS 4 web cockpit (`@kleinbem/web-config`) and `node --test` + `svelte-check` suite. |
 | `modules/nixos/` | `services.cadre` and Buzz ACP agent configurations. |
 | `modules/home-manager/` | `services.cadre` user service: systemd on Linux, launchd on macOS. |
-| `tests/` | The NixOS module on a minimal system, the home-manager module in a user's configuration; `push-cache.sh` runs the cache push against a throwaway SeaweedFS S3 (CI job `push-cache`). |
+| `tests/` | CLI/HTTP integration test (`cli.sh`), NixOS module check (`module.nix`), Home Manager check (`home-manager.nix`), and `push-cache.sh`. |
 
 - Packages come from `kleinbem/nix-packages` for now; moving the Block AI ones
   here (and nix-packages consuming this flake) is the next step.

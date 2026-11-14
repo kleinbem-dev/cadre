@@ -1,4 +1,4 @@
-import type { AgentTeammate, ComputeNode, ChatMessage, CadreSession } from '../types.js';
+import type { AgentTeammate, ComputeNode, ChatMessage } from '../types.js';
 
 export const INITIAL_TEAMMATES: AgentTeammate[] = [
 	{
@@ -6,7 +6,8 @@ export const INITIAL_TEAMMATES: AgentTeammate[] = [
 		handle: '@cadre',
 		name: 'Cadre Lead',
 		role: 'Pairing Assistant & Orchestrator',
-		description: 'General engineering teammate powered by Goose ACP. Plans architectures, runs commands, and drives pairing.',
+		description:
+			'General engineering teammate powered by Goose ACP. Plans architectures, runs commands, and drives pairing.',
 		avatar: '◈',
 		backend: 'mesh',
 		model: 'Qwen3-8B-Q4_K_M',
@@ -18,7 +19,8 @@ export const INITIAL_TEAMMATES: AgentTeammate[] = [
 		handle: '@cadre-code',
 		name: 'Cadre Code',
 		role: 'Refactoring & Bug Hunter',
-		description: 'Code-specialist teammate focused on AST manipulation, compiler error diagnostics, and test suites.',
+		description:
+			'Code-specialist teammate focused on AST manipulation, compiler error diagnostics, and test suites.',
 		avatar: '⚡',
 		backend: 'ollama',
 		model: 'qwen2.5-coder:14b',
@@ -30,7 +32,8 @@ export const INITIAL_TEAMMATES: AgentTeammate[] = [
 		handle: '@cadre-fleet',
 		name: 'Cadre Fleet',
 		role: 'NixOS & Fleet Systems Auditor',
-		description: 'Fleet infrastructure specialist. Manages JJ workspaces, evaluates Nix closures, and checks sops secrets.',
+		description:
+			'Fleet infrastructure specialist. Manages JJ workspaces, evaluates Nix closures, and checks sops secrets.',
 		avatar: '🛡️',
 		backend: 'mesh',
 		model: 'Qwen3-8B-Q4_K_M',
@@ -82,19 +85,25 @@ export const SAMPLE_MESSAGES: ChatMessage[] = [
 	{
 		id: 'msg-1',
 		role: 'user',
-		content: 'Can you verify the latest changes to web-config and confirm the exported components in the workspace?',
+		isPreview: true,
+		content:
+			'Can you verify the latest changes to web-config and confirm the exported components in the workspace?',
 		timestamp: '16:48'
 	},
 	{
 		id: 'msg-2',
 		role: 'thought',
-		content: 'Inspecting package.json exports in @kleinbem/web-config... Checking ./components/CommandPalette and ./components/StatusDot.',
+		isPreview: true,
+		content:
+			'Inspecting package.json exports in @kleinbem/web-config... Checking ./components/CommandPalette and ./components/StatusDot.',
 		timestamp: '16:48'
 	},
 	{
 		id: 'msg-3',
 		role: 'assistant',
-		content: 'I verified `@kleinbem/web-config`. The package now exports both `<StatusDot />` and `<CommandPalette />` with complete TypeScript definitions and Tailwind v4 `@source` registration.',
+		isPreview: true,
+		content:
+			'I verified `@kleinbem/web-config`. The package now exports both `<StatusDot />` and `<CommandPalette />` with complete TypeScript definitions and Tailwind v4 `@source` registration.',
 		toolCalls: [
 			{
 				tool: 'bash',
@@ -104,29 +113,5 @@ export const SAMPLE_MESSAGES: ChatMessage[] = [
 			}
 		],
 		timestamp: '16:49'
-	}
-];
-
-export const RECENT_SESSIONS: CadreSession[] = [
-	{
-		id: 'sess-1',
-		title: 'Verify @kleinbem/web-config components',
-		agentHandle: '@cadre',
-		createdAt: 'Today 16:48',
-		messageCount: 3
-	},
-	{
-		id: 'sess-2',
-		title: 'Mesh-LLM cluster load balancing & GPU split',
-		agentHandle: '@cadre-fleet',
-		createdAt: 'Yesterday 21:14',
-		messageCount: 14
-	},
-	{
-		id: 'sess-3',
-		title: 'Refactor ACP session lifecycle hooks',
-		agentHandle: '@cadre-code',
-		createdAt: 'Nov 5 10:20',
-		messageCount: 8
 	}
 ];

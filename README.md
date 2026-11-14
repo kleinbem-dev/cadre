@@ -67,7 +67,7 @@ The `gui` and `chat` commands need `berd` and `buzz-app` (or `buzz-cli`) on `PAT
 # Terminal pairing assistant (Goose in CLI):
 nix run github:kleinbem-dev/cadre
 
-# Web Dashboard (SvelteKit + web-config interface):
+# Web Dashboard (SvelteKit + local inference telemetry & chat):
 nix run github:kleinbem-dev/cadre -- web
 
 # Desktop GUI (Berd window on your local backend):
@@ -75,6 +75,9 @@ nix run github:kleinbem-dev/cadre -- gui
 
 # Team Chat (Buzz client):
 nix run github:kleinbem-dev/cadre -- chat
+
+# Print CLI version:
+nix run github:kleinbem-dev/cadre -- --version
 
 # Explicitly use Ollama backend:
 nix run github:kleinbem-dev/cadre -- --backend ollama --model qwen2.5-coder
@@ -110,6 +113,7 @@ Run `cadre` as a system service on your machines:
             web = {
               enable = true;
               port = 8384;
+              # enableChatProxy = true; # opt-in /api/chat on non-loopback listeners behind auth
             };
 
             # Deploy autonomous teammates into your Buzz team chat:
@@ -156,8 +160,8 @@ Run `cadre` as a user service without needing NixOS:
 
 | Package | Purpose |
 | :--- | :--- |
-| **`cadre`** | The unified launcher and agent harness |
-| **`cadre-web`** | The web surface and telemetry cockpit for Cadre |
+| **`cadre`** / **`cadre-ai`** | The unified launcher, local telemetry server, and agent harness |
+| **`cadre-web`** | The static web surface and telemetry cockpit for Cadre |
 | **`goose-cli`** | The core autonomous agent runtime ([aaif-goose](https://github.com/aaif-goose/goose)) |
 | **`mesh-llm`**, **`skippy`** | Distributed LLM inference over peer-to-peer mesh |
 | **`buzz-app`**, **`buzz-cli`**, **`buzz-relay`**, **`buzz-acp`** | Self-hosted Nostr team chat where agents are full participants |

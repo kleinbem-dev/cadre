@@ -14,6 +14,9 @@
 
 let
   cfg = config.services.cadre;
+  cadrePkg = pkgs.cadre.override {
+    mesh-llm = if cfg.backend == "mesh" then cfg.package else null;
+  };
 in
 {
   options.services.cadre = {
@@ -110,6 +113,16 @@ in
         description = "Whether to open the web dashboard port in the firewall.";
       };
 
+      enableChatProxy = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Whether to enable the `/api/chat` completion proxy when `listenAddress`
+          is non-loopback (for example `0.0.0.0` behind an authenticated proxy).
+          Loopback listeners (`127.0.0.1`, `::1`, `localhost`) always allow `/api/chat`.
+        '';
+      };
+
       package = lib.mkPackageOption pkgs "cadre-web" {
         default = [ "cadre-web" ];
         extraDescription = "The built Cadre web dashboard static package.";
@@ -133,90 +146,109 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    services.ollama = lib.mkIf (cfg.backend == "ollama") {
-      enable = lib.mkDefault true;
-      loadModels = lib.mkIf (cfg.models != [ ]) cfg.models;
-    };
-    systemd.services.ollama.wantedBy = lib.mkIf (cfg.backend == "ollama" && !cfg.autoStart) (
-      lib.mkForce [ ]
-    );
-    systemd.services.ollama-model-loader.wantedBy = lib.mkIf (
-      cfg.backend == "ollama" && !cfg.autoStart
-    ) (lib.mkForce [ ]);
-
-    services.mesh-llm = lib.mkIf (cfg.backend == "mesh") {
-      enable = true;
-      inherit (cfg) package meshPort openFirewall;
-      settings = lib.mkIf (cfg.models != [ ]) {
-        version = 1;
-        models = map (model: { inherit model; }) cfg.models;
+    services = {
+      ollama = lib.mkIf (cfg.backend == "ollama") {
+        enable = lib.mkDefault true;
+        loadModels = lib.mkIf (cfg.models != [ ]) cfg.models;
       };
-      # The service's user can't read a file only root can, so systemd reads
-      # it as a credential.
-      extraArgs =
-        lib.optionals (cfg.joinFile != null) [
-          "--join-file"
-          "%d/join"
-        ]
-        ++ cfg.extraArgs;
-    };
 
-    systemd.services.mesh-llm = lib.mkIf (cfg.backend == "mesh") {
-      wantedBy = lib.mkIf (!cfg.autoStart) (lib.mkForce [ ]);
-      serviceConfig.LoadCredential = lib.mkIf (cfg.joinFile != null) [
-        "join:${cfg.joinFile}"
-      ];
+      mesh-llm = lib.mkIf (cfg.backend == "mesh") {
+        enable = true;
+        inherit (cfg) package meshPort openFirewall;
+        settings = lib.mkIf (cfg.models != [ ]) {
+          version = 1;
+          models = map (model: { inherit model; }) cfg.models;
+        };
+        # The service's user can't read a file only root can, so systemd reads
+        # it as a credential.
+        extraArgs =
+          lib.optionals (cfg.joinFile != null) [
+            "--join-file"
+            "%d/join"
+          ]
+          ++ cfg.extraArgs;
+      };
     };
 
     networking.firewall.allowedTCPPorts = lib.mkIf (cfg.web.enable && cfg.web.openFirewall) [
       cfg.web.port
     ];
 
-    systemd.services.cadre-web = lib.mkIf cfg.web.enable {
-      description = "Cadre web dashboard";
-      after = [ "network.target" ];
-      wantedBy = [ "multi-user.target" ];
-      serviceConfig = {
-        ExecStart = "${pkgs.python3}/bin/python3 -m http.server ${toString cfg.web.port} --bind ${cfg.web.listenAddress} --directory ${cfg.web.package}";
-        Restart = "on-failure";
-        RestartSec = 5;
-        DynamicUser = true;
-        CapabilityBoundingSet = "";
-        LockPersonality = true;
-        NoNewPrivileges = true;
-        PrivateDevices = true;
-        PrivateTmp = true;
-        ProtectClock = true;
-        ProtectControlGroups = true;
-        ProtectHome = true;
-        ProtectHostname = true;
-        ProtectKernelLogs = true;
-        ProtectKernelModules = true;
-        ProtectKernelTunables = true;
-        ProtectProc = "invisible";
-        ProtectSystem = "strict";
-        RestrictAddressFamilies = [
-          "AF_INET"
-          "AF_INET6"
-          "AF_UNIX"
+    systemd.services = {
+      ollama.wantedBy = lib.mkIf (cfg.backend == "ollama" && !cfg.autoStart) (lib.mkForce [ ]);
+      ollama-model-loader.wantedBy = lib.mkIf (cfg.backend == "ollama" && !cfg.autoStart) (
+        lib.mkForce [ ]
+      );
+
+      mesh-llm = lib.mkIf (cfg.backend == "mesh") {
+        wantedBy = lib.mkIf (!cfg.autoStart) (lib.mkForce [ ]);
+        serviceConfig.LoadCredential = lib.mkIf (cfg.joinFile != null) [
+          "join:${cfg.joinFile}"
         ];
-        RestrictNamespaces = true;
-        RestrictRealtime = true;
-        RestrictSUIDSGID = true;
-        SystemCallArchitectures = "native";
-        SystemCallFilter = [
-          "@system-service"
-          "~@privileged"
-        ];
+      };
+
+      cadre-web = lib.mkIf cfg.web.enable {
+        description = "Cadre web dashboard";
+        after = [ "network.target" ];
+        wantedBy = [ "multi-user.target" ];
+        serviceConfig = {
+          ExecStart = lib.escapeShellArgs (
+            [
+              (lib.getExe pkgs.python3)
+              "${cadrePkg}/libexec/cadre/server.py"
+              "--host"
+              cfg.web.listenAddress
+              "--port"
+              (toString cfg.web.port)
+              "--static-dir"
+              "${cfg.web.package}"
+              "--backend"
+              cfg.backend
+            ]
+            ++ lib.optional (cfg.models != [ ]) "--default-model=${builtins.head cfg.models}"
+            ++ lib.optional cfg.web.enableChatProxy "--enable-chat-proxy"
+          );
+          Restart = "on-failure";
+          RestartSec = 5;
+          DynamicUser = true;
+          UMask = "0077";
+          CapabilityBoundingSet = "";
+          LockPersonality = true;
+          NoNewPrivileges = true;
+          PrivateDevices = true;
+          PrivateTmp = true;
+          ProtectClock = true;
+          ProtectControlGroups = true;
+          ProtectHome = true;
+          ProtectHostname = true;
+          ProtectKernelLogs = true;
+          ProtectKernelModules = true;
+          ProtectKernelTunables = true;
+          ProtectProc = "invisible";
+          ProtectSystem = "strict";
+          RestrictAddressFamilies = [
+            "AF_INET"
+            "AF_INET6"
+            "AF_UNIX"
+          ];
+          RestrictNamespaces = true;
+          RestrictRealtime = true;
+          RestrictSUIDSGID = true;
+          SystemCallArchitectures = "native";
+          SystemCallFilter = [
+            "@system-service"
+            "~@privileged"
+          ];
+        };
       };
     };
 
     environment = lib.mkMerge [
+      (lib.mkIf (cfg.goose.enable || cfg.desktop.enable) {
+        systemPackages = [ cadrePkg ];
+      })
       (lib.mkIf cfg.goose.enable {
-        systemPackages = [
-          pkgs.goose-cli
-          pkgs.cadre
-        ];
+        systemPackages = [ pkgs.goose-cli ];
         # goose otherwise asks to share usage data, with yes preselected.
         sessionVariables = {
           GOOSE_TELEMETRY_OFF = lib.mkDefault "1";
