@@ -17,8 +17,7 @@ in
   buzz-acp = pick "buzz-acp";
   berd = pick "berd";
   braindump = pick "braindump";
-  cadre-web = final.callPackage ./pkgs/web { };
-  cadre = final.callPackage ./pkgs/cadre {
-    web = final.cadre-web;
-  };
+  cadre-ai = final.callPackage ./package.nix { };
+  cadre = final.cadre-ai;
+  cadre-web = final.cadre-ai.web;
 }

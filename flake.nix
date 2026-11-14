@@ -70,21 +70,24 @@
             berd = null;
             braindump = null;
           };
-          web = pkgs.callPackage ./pkgs/web { };
-          cadre = pkgs.callPackage ./pkgs/cadre {
+          cadre = pkgs.callPackage ./package.nix {
             mesh-llm = pick "mesh-llm";
-            inherit web;
           };
         in
         {
           packages = lib.mapAttrs (name: _: pick name) stack // {
-            inherit cadre web;
-            cadre-web = web;
+            inherit cadre;
+            cadre-ai = cadre;
+            inherit (cadre) web;
+            cadre-web = cadre.web;
             inherit (pkgs) goose-cli;
             default = cadre;
           };
 
-          checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          checks = {
+            inherit (cadre.tests) cli;
+          }
+          // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             module = import ./tests/module.nix {
               inherit pkgs;
               module = inputs.self.nixosModules.default;

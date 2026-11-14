@@ -2,6 +2,10 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
+		<link
+			rel="icon"
+			href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b0f19'/%3E%3Cpolygon points='32,10 52,32 32,54 12,32' fill='none' stroke='%23f59e0b' stroke-width='4'/%3E%3Ccircle cx='32' cy='32' r='5' fill='%23f59e0b'/%3E%3C/svg%3E"
+		/>
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="color-scheme" content="dark light" />
 		<title>Cadre ◈ Private AI Teammates</title>
@@ -9,17 +13,17 @@
 			try {
 				const p = localStorage.getItem('fleet-theme');
 				const m = window.matchMedia('(prefers-color-scheme: dark)').matches;
-				const t = (!p || p === 'system') ? (m ? 'dark' : 'light') : p;
+				const t = p === 'dark' || p === 'light' ? p : m ? 'dark' : 'light';
 				document.documentElement.dataset.theme = t;
 				document.documentElement.classList.toggle('dark', t === 'dark');
 				document.documentElement.classList.toggle('light', t === 'light');
 
 				const s = localStorage.getItem('fleet-font-size');
-				if (s && s !== 'normal') {
+				if (s === 'small' || s === 'large' || s === 'larger') {
 					document.documentElement.dataset.fontSize = s;
 					document.documentElement.classList.add('font-size-' + s);
 				}
-			} catch (e) {}
+			} catch {}
 		</script>
 		%sveltekit.head%
 	</head>

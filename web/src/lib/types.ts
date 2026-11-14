@@ -1,3 +1,9 @@
+export const APP_VERSION = '0.1.0';
+
+export type TabId = 'session' | 'teammates' | 'compute';
+
+export type ConnectionMode = 'checking' | 'live' | 'standby' | 'preview';
+
 export type AgentStatus = 'idle' | 'busy' | 'offline';
 
 export interface AgentTeammate {
@@ -22,8 +28,9 @@ export interface ToolCall {
 
 export interface ChatMessage {
 	id: string;
-	role: 'user' | 'assistant' | 'tool' | 'thought';
+	role: 'user' | 'assistant' | 'thought';
 	content: string;
+	isError?: boolean;
 	toolCalls?: ToolCall[];
 	timestamp: string;
 }
@@ -34,6 +41,7 @@ export interface ComputeNode {
 	nodeType: 'laptop' | 'gpu-box' | 'cluster-peer';
 	backend: 'ollama' | 'mesh';
 	activeModel: string;
+	models?: string[];
 	vramUsedGb: number;
 	vramTotalGb: number;
 	tokensPerSec: number;
@@ -41,10 +49,11 @@ export interface ComputeNode {
 	status: 'healthy' | 'degraded' | 'down' | 'checking' | 'unknown';
 }
 
-export interface CadreSession {
-	id: string;
-	title: string;
-	agentHandle: string;
-	createdAt: string;
-	messageCount: number;
+export interface BackendStatusResponse {
+	activeBackend: 'mesh' | 'ollama' | 'standby';
+	configuredBackend: 'auto' | 'mesh' | 'ollama';
+	defaultModel: string;
+	chatEnabled: boolean;
+	host: string;
+	nodes: ComputeNode[];
 }

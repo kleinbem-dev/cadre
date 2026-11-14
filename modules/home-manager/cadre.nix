@@ -10,11 +10,21 @@
 
 let
   cfg = config.services.cadre;
-  # The user's pkgs first: our flake's packages are built without the host's
-  # overlays, so they miss its fixes and holds.
+  flakePkgs = packages.${pkgs.stdenv.hostPlatform.system};
+  # nixpkgs ships an unrelated Ruby gem at `pkgs.cadre`, so only prefer `pkgs.cadre`
+  # when the user applied this flake's overlay (`cadre-ai` is unambiguous).
+  isOurCadre = pkg: (pkg.meta.homepage or "") == "https://github.com/kleinbem-dev/cadre";
   stack = lib.mapAttrs (
-    name: package: pkgs.${name} or package
-  ) packages.${pkgs.stdenv.hostPlatform.system};
+    name: package:
+    if name == "cadre" then
+      if pkgs ? cadre && isOurCadre pkgs.cadre then pkgs.cadre else pkgs.cadre-ai or package
+    else
+      pkgs.${name} or package
+  ) flakePkgs;
+
+  cadrePkg = stack.cadre.override {
+    mesh-llm = if cfg.backend == "mesh" then cfg.package else null;
+  };
 
   configFile = (pkgs.formats.toml { }).generate "mesh-llm-config.toml" {
     version = 1;
@@ -42,12 +52,12 @@ let
     models = [
       {
         name = defaultModel;
-        context_limit = if cfg.backend == "ollama" then 4096 else 32768;
+        context_limit = 32768;
       }
     ]
     ++ lib.optional (cfg.backend != "ollama" && defaultModel != "cadre") {
       name = "cadre";
-      context_limit = if cfg.backend == "ollama" then 4096 else 32768;
+      context_limit = 32768;
     };
     timeout_seconds = 600;
     supports_streaming = true;
@@ -55,9 +65,12 @@ let
   };
 
   node = pkgs.writeShellScript "cadre-mesh-node" ''
-    ${lib.optionalString (cfg.models != [ ]) ''
-      ${pkgs.coreutils}/bin/install -D -m 0600 ${configFile} "$HOME/.mesh-llm/config.toml"
-    ''}
+    ${
+      if cfg.models != [ ] then
+        ''${lib.getExe' pkgs.coreutils "install"} -D -m 0600 ${configFile} "$HOME/.mesh-llm/config.toml"''
+      else
+        ''${lib.getExe' pkgs.coreutils "rm"} -f "$HOME/.mesh-llm/config.toml"''
+    }
     exec ${
       lib.escapeShellArgs (
         [
@@ -72,6 +85,7 @@ let
           "--join-file"
           cfg.joinFile
         ]
+        ++ cfg.extraArgs
       )
     }
   '';
@@ -127,6 +141,12 @@ in
       description = "UDP port for the mesh's traffic between nodes.";
     };
 
+    extraArgs = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "Extra arguments for `mesh-llm serve` (when using mesh backend).";
+    };
+
     autoStart = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -156,11 +176,12 @@ in
 
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
+      (lib.mkIf (cfg.goose.enable || (cfg.desktop.enable && pkgs.stdenv.hostPlatform.isLinux)) {
+        home.packages = [ cadrePkg ];
+      })
+
       (lib.mkIf cfg.goose.enable {
-        home.packages = [
-          stack.goose-cli
-          stack.cadre
-        ];
+        home.packages = [ stack.goose-cli ];
         # goose otherwise asks to share usage data, with yes preselected.
         home.sessionVariables = {
           GOOSE_TELEMETRY_OFF = lib.mkDefault "1";
@@ -173,7 +194,6 @@ in
 
       (lib.mkIf (cfg.desktop.enable && pkgs.stdenv.hostPlatform.isLinux) {
         home.packages = lib.concatLists [
-          [ stack.cadre ]
           (lib.optional (stack ? berd) stack.berd)
           (lib.optional (stack ? buzz-app) stack.buzz-app)
         ];

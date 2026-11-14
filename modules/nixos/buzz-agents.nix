@@ -77,8 +77,7 @@ let
 
       contextLimit = lib.mkOption {
         type = lib.types.ints.positive;
-        default = if cfg.backend == "ollama" then 4096 else 32768;
-        defaultText = lib.literalExpression ''if config.services.cadre.backend == "ollama" then 4096 else 32768'';
+        default = 32768;
         description = "Context limit in tokens exposed to Goose for compaction planning.";
       };
 
@@ -125,7 +124,8 @@ let
       after = [
         "network-online.target"
       ]
-      ++ lib.optional (cfg.backend == "mesh") "mesh-llm.service";
+      ++ lib.optional (cfg.backend == "mesh") "mesh-llm.service"
+      ++ lib.optional (cfg.backend == "ollama") "ollama.service";
       path = [
         pkgs.goose-cli
         pkgs.buzz-cli
@@ -186,6 +186,11 @@ let
         RestrictRealtime = true;
         RestrictSUIDSGID = true;
         SystemCallArchitectures = "native";
+        SystemCallFilter = [
+          "@system-service"
+          "~@privileged"
+        ];
+        UMask = "0077";
       };
     };
 in
@@ -208,6 +213,19 @@ in
   };
 
   config = lib.mkIf (cfg.enable && cfg.buzz.agents != { }) {
+    assertions = lib.mapAttrsToList (name: _: {
+      assertion = builtins.match "^[a-zA-Z0-9_-]+$" name != null;
+      message = "services.cadre.buzz.agents name '${name}' must match ^[a-zA-Z0-9_-]+$";
+    }) cfg.buzz.agents;
+
+    warnings = lib.concatLists (
+      lib.mapAttrsToList (
+        name: agent:
+        lib.optional (agent.respondTo == "owner-only" && agent.owner == null)
+          "services.cadre.buzz.agents.${name} has respondTo = \"owner-only\" with owner = null; the agent will ignore all messages."
+      ) cfg.buzz.agents
+    );
+
     systemd.services = lib.mapAttrs' agentService cfg.buzz.agents;
   };
 }
