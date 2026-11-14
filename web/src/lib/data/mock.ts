@@ -85,6 +85,7 @@ export const SAMPLE_MESSAGES: ChatMessage[] = [
 	{
 		id: 'msg-1',
 		role: 'user',
+		isPreview: true,
 		content:
 			'Can you verify the latest changes to web-config and confirm the exported components in the workspace?',
 		timestamp: '16:48'
@@ -92,6 +93,7 @@ export const SAMPLE_MESSAGES: ChatMessage[] = [
 	{
 		id: 'msg-2',
 		role: 'thought',
+		isPreview: true,
 		content:
 			'Inspecting package.json exports in @kleinbem/web-config... Checking ./components/CommandPalette and ./components/StatusDot.',
 		timestamp: '16:48'
@@ -99,6 +101,7 @@ export const SAMPLE_MESSAGES: ChatMessage[] = [
 	{
 		id: 'msg-3',
 		role: 'assistant',
+		isPreview: true,
 		content:
 			'I verified `@kleinbem/web-config`. The package now exports both `<StatusDot />` and `<CommandPalette />` with complete TypeScript definitions and Tailwind v4 `@source` registration.',
 		toolCalls: [

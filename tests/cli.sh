@@ -290,11 +290,23 @@ status_json=$(curl -fsS "http://127.0.0.1:$web_port/api/status")
 [ "$(jq -r '.defaultModel' <<<"$status_json")" = "Qwen3-Test-4B" ] || fail "unexpected defaultModel: $status_json"
 [ "$(jq -r '.chatEnabled' <<<"$status_json")" = "true" ] || fail "expected chatEnabled=true on loopback"
 
-# Loopback /api/chat proxies to local MeshLLM
+# Loopback /api/chat proxies to local MeshLLM (same-origin allowed, simple text/plain & cross-origin rejected)
 chat_resp=$(curl -fsS -X POST "http://127.0.0.1:$web_port/api/chat" \
   -H 'Content-Type: application/json' \
+  -H "Origin: http://127.0.0.1:$web_port" \
   -d '{"messages":[{"role":"user","content":"hello cadre"}]}')
 [ "$(jq -r '.reply' <<<"$chat_resp")" = "ack:hello cadre" ] || fail "unexpected /api/chat reply: $chat_resp"
+
+plain_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$web_port/api/chat" \
+  -H 'Content-Type: text/plain' \
+  -d '{"messages":[{"role":"user","content":"csrf"}]}')
+[ "$plain_code" = "415" ] || fail "expected 415 for text/plain /api/chat, got $plain_code"
+
+xorigin_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$web_port/api/chat" \
+  -H 'Content-Type: application/json' \
+  -H 'Origin: https://evil.example' \
+  -d '{"messages":[{"role":"user","content":"csrf"}]}')
+[ "$xorigin_code" = "403" ] || fail "expected 403 for cross-origin /api/chat, got $xorigin_code"
 
 kill -TERM "$web_pid" 2>/dev/null || true
 wait "$web_pid" 2>/dev/null || true

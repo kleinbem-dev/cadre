@@ -59,6 +59,8 @@ export class CadreState {
 	status = $state<BackendStatusResponse | null>(null);
 
 	#msgSeq = 100;
+	#refreshSeq = 0;
+	#refreshAbort: AbortController | null = null;
 
 	teammates = $derived<AgentTeammate[]>(
 		resolveTeammates(
@@ -102,6 +104,7 @@ export class CadreState {
 	}
 
 	selectAgent(agentId: string): void {
+		if (this.sending) return;
 		if (INITIAL_TEAMMATES.some((t) => t.id === agentId)) {
 			this.selectedAgentId = agentId;
 			this.activeTab = 'session';
@@ -109,16 +112,25 @@ export class CadreState {
 	}
 
 	async refreshStatus(force = false): Promise<void> {
+		const seq = ++this.#refreshSeq;
+		this.#refreshAbort?.abort();
+		const controller = new AbortController();
+		this.#refreshAbort = controller;
 		this.refreshing = true;
 		try {
 			const url = force ? '/api/status?refresh=1' : '/api/status';
-			const resp = await fetch(url, { headers: { Accept: 'application/json' } });
+			const resp = await fetch(url, {
+				headers: { Accept: 'application/json' },
+				signal: controller.signal
+			});
+			if (seq !== this.#refreshSeq) return;
 			if (!resp.ok) {
 				this.connectionMode = 'preview';
 				this.status = null;
 				return;
 			}
 			const data = (await resp.json()) as BackendStatusResponse;
+			if (seq !== this.#refreshSeq) return;
 			if (!data || typeof data.activeBackend !== 'string' || !Array.isArray(data.nodes)) {
 				this.connectionMode = 'preview';
 				this.status = null;
@@ -127,10 +139,14 @@ export class CadreState {
 			this.status = data;
 			this.connectionMode = data.activeBackend === 'standby' ? 'standby' : 'live';
 		} catch {
+			if (seq !== this.#refreshSeq) return;
 			this.connectionMode = 'preview';
 			this.status = null;
 		} finally {
-			this.refreshing = false;
+			if (seq === this.#refreshSeq) {
+				this.refreshing = false;
+				this.#refreshAbort = null;
+			}
 		}
 	}
 
@@ -139,10 +155,12 @@ export class CadreState {
 		if (!text || this.sending) return;
 
 		const agent = this.activeAgent;
+		const isLiveChat = this.connectionMode === 'live' && Boolean(this.status?.chatEnabled);
 		const userMsg: ChatMessage = {
 			id: `msg-${++this.#msgSeq}`,
 			role: 'user',
 			content: text,
+			...(isLiveChat ? {} : { isPreview: true }),
 			timestamp: nowTime()
 		};
 		this.messages = [...this.messages, userMsg];
@@ -183,6 +201,7 @@ export class CadreState {
 				{
 					id: `msg-${++this.#msgSeq}`,
 					role: 'assistant',
+					isPreview: true,
 					content: `[Preview mode — run 'cadre web' to connect ${agent.handle} to local MeshLLM or Ollama inference.]`,
 					timestamp: nowTime()
 				}
@@ -193,7 +212,11 @@ export class CadreState {
 		this.sending = true;
 		try {
 			const history = this.messages
-				.filter((m) => m.role === 'user' || (m.role === 'assistant' && !m.isError))
+				.filter(
+					(m) =>
+						!m.isPreview &&
+						(m.role === 'user' || (m.role === 'assistant' && !m.isError))
+				)
 				.slice(-16)
 				.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 

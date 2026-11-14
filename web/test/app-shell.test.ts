@@ -134,52 +134,89 @@ describe('seed teammates, compute nodes, and live state resolution', () => {
 		assert.ok(standby.every((t) => t.status === 'offline'));
 	});
 
-	it('handles live /api/status + /api/chat and locked non-loopback chat cleanly', async () => {
+	it('handles live /api/status + /api/chat, excludes preview history, and guards overlapping calls', async () => {
 		const store = new CadreState();
-		globalThis.fetch = (async (input: RequestInfo | URL) => {
+		let postedMessages: Array<{ role: string; content: string }> = [];
+
+		// Simulate a preview message before live status arrives
+		store.connectionMode = 'preview';
+		await store.sendMessage('preview question');
+
+		// Simulate overlapping status refreshes where stale request resolves after newer one
+		let resolveSlow!: (r: Response) => void;
+		let callCount = 0;
+		globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
 			const url = String(input);
 			if (url.startsWith('/api/status')) {
-				return new Response(
-					JSON.stringify({
-						activeBackend: 'mesh',
-						configuredBackend: 'mesh',
-						defaultModel: 'Qwen3-Local',
-						chatEnabled: true,
-						host: 'nixos-nvme',
-						nodes: [
-							{
-								id: 'local-mesh',
-								host: 'nixos-nvme',
-								nodeType: 'gpu-box',
-								backend: 'mesh',
-								activeModel: 'Qwen3-Local',
-								vramUsedGb: 0,
-								vramTotalGb: 0,
-								tokensPerSec: 0,
-								latencyMs: 2,
-								status: 'healthy'
-							}
-						]
-					}),
-					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				callCount += 1;
+				if (callCount === 1) {
+					return new Promise<Response>((res) => {
+						resolveSlow = res;
+					});
+				}
+				return Promise.resolve(
+					new Response(
+						JSON.stringify({
+							activeBackend: 'mesh',
+							configuredBackend: 'mesh',
+							defaultModel: 'Qwen3-Local',
+							chatEnabled: true,
+							host: 'nixos-nvme',
+							nodes: [
+								{
+									id: 'local-mesh',
+									host: 'nixos-nvme',
+									nodeType: 'gpu-box',
+									backend: 'mesh',
+									activeModel: 'Qwen3-Local',
+									vramUsedGb: 0,
+									vramTotalGb: 0,
+									tokensPerSec: 0,
+									latencyMs: 2,
+									status: 'healthy'
+								}
+							]
+						}),
+						{ status: 200, headers: { 'Content-Type': 'application/json' } }
+					)
 				);
 			}
-			return new Response(JSON.stringify({ reply: 'live reply from mesh' }), {
-				status: 200,
-				headers: { 'Content-Type': 'application/json' }
-			});
+			const parsed = JSON.parse(String(init?.body ?? '{}')) as {
+				messages: Array<{ role: string; content: string }>;
+			};
+			postedMessages = parsed.messages;
+			return Promise.resolve(
+				new Response(JSON.stringify({ reply: 'live reply from mesh' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			);
 		}) as typeof fetch;
 
-		await store.refreshStatus();
+		const stalePromise = store.refreshStatus(false);
+		const freshPromise = store.refreshStatus(true);
+		await freshPromise;
+		resolveSlow(new Response('not found', { status: 404 }));
+		await stalePromise;
+
 		assert.equal(store.connectionMode, 'live');
 		assert.equal(store.isReferenceNodes, false);
 		assert.equal(store.activeAgent.model, 'Qwen3-Local');
 
 		const before = store.messages.length;
-		await store.sendMessage('ping local node');
+		const chatPromise = store.sendMessage('ping local node');
+		assert.equal(store.sending, true);
+		store.selectAgent('cadre-code');
+		assert.equal(store.selectedAgentId, 'cadre-core');
+		await chatPromise;
+
 		assert.equal(store.messages.length, before + 2);
 		assert.equal(store.messages.at(-1)?.content, 'live reply from mesh');
 		assert.equal(store.messages.at(-1)?.isError, undefined);
+		assert.deepEqual(
+			postedMessages.filter((m) => m.role !== 'system'),
+			[{ role: 'user', content: 'ping local node' }]
+		);
 
 		// Locked chat on non-loopback listener produces clear diagnostic error message
 		store.status = { ...store.status!, chatEnabled: false };

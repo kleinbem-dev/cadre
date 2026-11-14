@@ -79,6 +79,32 @@ def http_post_json(endpoint: tuple[str, int], path: str, body: dict, timeout: fl
         conn.close()
 
 
+def _pick_model(models: list[str], default_model: str, fallback: str) -> str:
+    if default_model and default_model in models:
+        return default_model
+    if models:
+        return models[0]
+    return default_model or fallback
+
+
+def resolve_address_family(host: str, port: int) -> socket.AddressFamily:
+    try:
+        infos = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM, 0, socket.AI_PASSIVE)
+        if infos:
+            return infos[0][0]
+    except socket.gaierror:
+        pass
+    return socket.AF_INET6 if ":" in host else socket.AF_INET
+
+
+class DualStackHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+
+    def __init__(self, server_address: tuple[str, int], handler_cls):
+        self.address_family = resolve_address_family(server_address[0], server_address[1])
+        super().__init__(server_address, handler_cls)
+
+
 class StatusCache:
     def __init__(
         self,
@@ -125,7 +151,7 @@ class StatusCache:
                     "host": self.hostname,
                     "nodeType": "gpu-box",
                     "backend": "mesh",
-                    "activeModel": mesh_models[0] if mesh_models else (self.default_model or "idle"),
+                    "activeModel": _pick_model(mesh_models, self.default_model, "idle"),
                     "models": mesh_models,
                     "vramUsedGb": 0.0,
                     "vramTotalGb": 0.0,
@@ -141,14 +167,14 @@ class StatusCache:
                 if isinstance(raw_tags, list):
                     ollama_models = [str(m["name"]) for m in raw_tags if isinstance(m, dict) and m.get("name")]
                 vram_used_gb = 0.0
-                active_ollama = ollama_models[0] if ollama_models else (self.default_model or "idle")
+                active_ollama = _pick_model(ollama_models, self.default_model, "idle")
                 ps_data, _ = http_get_json(self.ollama_ep, "/api/ps", timeout=1.0)
                 if ps_data and isinstance(ps_data.get("models"), list) and ps_data["models"]:
                     first_loaded = ps_data["models"][0]
                     if isinstance(first_loaded, dict):
                         active_ollama = str(first_loaded.get("name") or active_ollama)
                         vram_bytes = sum(
-                            int(m.get("size_vram") or m.get("size") or 0)
+                            int(m["size_vram"]) if m.get("size_vram") is not None else 0
                             for m in ps_data["models"]
                             if isinstance(m, dict)
                         )
@@ -164,15 +190,21 @@ class StatusCache:
                     "vramTotalGb": 0.0,
                     "tokensPerSec": 0.0,
                     "latencyMs": latency_ms,
-                    "status": "healthy",
+                    "status": "healthy" if ollama_models else "degraded",
                 })
 
-        if mesh_models or any(n["backend"] == "mesh" for n in nodes):
+        if mesh_models:
             active_backend = "mesh"
-            resolved_model = mesh_models[0] if mesh_models else (self.default_model or "Qwen3-8B-Q4_K_M")
+            resolved_model = _pick_model(mesh_models, self.default_model, "Qwen3-8B-Q4_K_M")
+        elif ollama_models:
+            active_backend = "ollama"
+            resolved_model = _pick_model(ollama_models, self.default_model, "qwen2.5-coder")
+        elif any(n["backend"] == "mesh" for n in nodes):
+            active_backend = "mesh"
+            resolved_model = self.default_model or "Qwen3-8B-Q4_K_M"
         elif any(n["backend"] == "ollama" for n in nodes):
             active_backend = "ollama"
-            resolved_model = ollama_models[0] if ollama_models else (self.default_model or "qwen2.5-coder")
+            resolved_model = self.default_model or "qwen2.5-coder"
         else:
             active_backend = "standby"
             resolved_model = self.default_model or (
@@ -194,8 +226,28 @@ def make_handler(
     status_cache: StatusCache,
     mesh_ep: tuple[str, int],
     ollama_ep: tuple[str, int],
+    bind_host: str,
+    bind_port: int,
+    allow_remote_origin: bool,
 ):
     real_root = os.path.realpath(static_root)
+    loopback_bound = bind_host in LOOPBACK_HOSTS and not allow_remote_origin
+
+    def _origin_allowed(origin_header: str, host_header: str) -> bool:
+        parsed_origin = urllib.parse.urlparse(origin_header)
+        if parsed_origin.scheme not in ("http", "https") or not parsed_origin.netloc:
+            return False
+        if parsed_origin.path not in ("", "/") or parsed_origin.params or parsed_origin.query or parsed_origin.fragment:
+            return False
+        req_host = host_header.strip().lower()
+        if not req_host or parsed_origin.netloc.lower() != req_host:
+            return False
+        if loopback_bound:
+            default_port = 443 if parsed_origin.scheme == "https" else 80
+            origin_port = parsed_origin.port or default_port
+            if (parsed_origin.hostname or "").lower() not in LOOPBACK_HOSTS or origin_port != bind_port:
+                return False
+        return True
 
     class CadreHandler(BaseHTTPRequestHandler):
         server_version = "cadre-web/0.1"
@@ -302,6 +354,21 @@ def make_handler(
                         )
                     },
                 )
+                return
+
+            ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if ctype != "application/json":
+                self._send_json(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "Content-Type must be application/json"})
+                return
+
+            sec_site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+            if sec_site and sec_site not in ("same-origin", "none"):
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "Cross-origin chat request rejected"})
+                return
+
+            origin = (self.headers.get("Origin") or "").strip()
+            if origin and not _origin_allowed(origin, self.headers.get("Host") or ""):
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "Cross-origin chat request rejected"})
                 return
 
             try:
@@ -429,10 +496,17 @@ def main() -> int:
         ollama_ep=ollama_ep,
         chat_enabled=chat_enabled,
     )
-    handler = make_handler(args.static_dir, status_cache, mesh_ep, ollama_ep)
+    handler = make_handler(
+        args.static_dir,
+        status_cache,
+        mesh_ep,
+        ollama_ep,
+        bind_host=args.host,
+        bind_port=args.port,
+        allow_remote_origin=args.enable_chat_proxy,
+    )
 
-    ThreadingHTTPServer.allow_reuse_address = True
-    httpd = ThreadingHTTPServer((args.host, args.port), handler)
+    httpd = DualStackHTTPServer((args.host, args.port), handler)
 
     def _stop(_signum: int, _frame) -> None:
         threading.Thread(target=httpd.shutdown, daemon=True).start()

@@ -6,7 +6,7 @@ let
   nixos = pkgs.nixos {
     imports = [ module ];
     nixpkgs.overlays = [
-      # WORKAROUND(berd): locked kleinbem/nix-packages pins berd 0.6.4 without aws-lc in buildInputs — remove when flake.lock includes berd >= 0.6.5 (or keep to avoid compiling Tauri desktop apps in headless module checks).
+      # WORKAROUND(berd): locked kleinbem/nix-packages pins berd 0.6.4 without aws-lc in buildInputs (updated in https://github.com/NixOS/nixpkgs/pull/580616) — remove when flake.lock includes berd >= 0.6.5.
       (final: _prev: {
         berd = final.writeShellScriptBin "berd" "exit 0";
         buzz-app = final.writeShellScriptBin "buzz-app" "exit 0";

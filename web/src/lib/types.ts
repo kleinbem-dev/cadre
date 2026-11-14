@@ -31,6 +31,7 @@ export interface ChatMessage {
 	role: 'user' | 'assistant' | 'thought';
 	content: string;
 	isError?: boolean;
+	isPreview?: boolean;
 	toolCalls?: ToolCall[];
 	timestamp: string;
 }
