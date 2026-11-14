@@ -6,6 +6,8 @@ export type ConnectionMode = 'checking' | 'live' | 'standby' | 'preview';
 
 export type AgentStatus = 'idle' | 'busy' | 'offline';
 
+export type AcpHarness = 'goose' | 'buzz-agent' | 'pi-acp' | 'amp-acp';
+
 export interface AgentTeammate {
 	id: string;
 	handle: string;
@@ -13,8 +15,10 @@ export interface AgentTeammate {
 	role: string;
 	description: string;
 	avatar: string;
+	harness?: AcpHarness;
 	backend: 'ollama' | 'mesh';
 	model: string;
+	systemPrompt?: string;
 	tools: string[];
 	status: AgentStatus;
 }
@@ -50,6 +54,18 @@ export interface ComputeNode {
 	status: 'healthy' | 'degraded' | 'down' | 'checking' | 'unknown';
 }
 
+export interface HarnessReadiness {
+	id: AcpHarness;
+	available: boolean;
+}
+
+export interface ExtensionReadiness {
+	id: string;
+	name: string;
+	type: string;
+	enabled: boolean;
+}
+
 export interface BackendStatusResponse {
 	activeBackend: 'mesh' | 'ollama' | 'standby';
 	configuredBackend: 'auto' | 'mesh' | 'ollama';
@@ -57,4 +73,7 @@ export interface BackendStatusResponse {
 	chatEnabled: boolean;
 	host: string;
 	nodes: ComputeNode[];
+	agents?: AgentTeammate[];
+	harnesses?: HarnessReadiness[];
+	extensions?: ExtensionReadiness[];
 }

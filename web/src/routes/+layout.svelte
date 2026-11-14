@@ -20,31 +20,15 @@
 		void cadre.refreshStatus();
 	});
 
-	const commandItems: CommandItem[] = [
-		{
-			id: 'agent-lead',
-			title: 'Switch to @cadre (Lead Pairing)',
+	let commandItems = $derived<CommandItem[]>([
+		...cadre.teammates.map((t) => ({
+			id: `agent-${t.id}`,
+			title: `Switch to ${t.handle} (${t.name})`,
 			category: 'Teammates',
-			icon: '◈',
-			badge: 'MeshLLM',
-			onSelect: () => cadre.selectAgent('cadre-core')
-		},
-		{
-			id: 'agent-code',
-			title: 'Switch to @cadre-code (Refactoring)',
-			category: 'Teammates',
-			icon: '⚡',
-			badge: 'Ollama',
-			onSelect: () => cadre.selectAgent('cadre-code')
-		},
-		{
-			id: 'agent-fleet',
-			title: 'Switch to @cadre-fleet (Nix & Ops)',
-			category: 'Teammates',
-			icon: '🛡️',
-			badge: 'MeshLLM',
-			onSelect: () => cadre.selectAgent('cadre-fleet')
-		},
+			icon: t.avatar,
+			badge: t.backend === 'mesh' ? 'MeshLLM' : 'Ollama',
+			onSelect: () => cadre.selectAgent(t.id)
+		})),
 		{
 			id: 'tab-session',
 			title: 'View Pairing Session',
@@ -99,7 +83,7 @@
 			url: 'https://github.com/kleinbem-dev/cadre',
 			external: true
 		}
-	];
+	]);
 </script>
 
 <a

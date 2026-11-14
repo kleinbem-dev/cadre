@@ -54,7 +54,18 @@ cat >"$stubs/buzz-app" <<EOF
 printf 'CMD=buzz-app ARGS=%s TELEMETRY=%s\n' "\$*" "\${GOOSE_TELEMETRY_OFF:-}" >"\$STUB_OUT"
 EOF
 
-chmod +x "$stubs/goose" "$stubs/berd" "$stubs/buzz-app"
+cat >"$stubs/review" <<EOF
+#!$bash_bin
+printf 'CMD=review ARGS=%s PROVIDER=%s MODEL=%s TELEMETRY=%s\n' \
+  "\$*" "\${GOOSE_PROVIDER:-}" "\${GOOSE_MODEL:-}" "\${GOOSE_TELEMETRY_OFF:-}" >"\$STUB_OUT"
+EOF
+
+cat >"$stubs/ai-rules" <<EOF
+#!$bash_bin
+printf 'CMD=ai-rules ARGS=%s\n' "\$*" >"\$STUB_OUT"
+EOF
+
+chmod +x "$stubs/goose" "$stubs/berd" "$stubs/buzz-app" "$stubs/review" "$stubs/ai-rules"
 
 # 1. Version, help output, and malformed arguments on built wrapper binary.
 ver_out=$("$CADRE_BIN" --version)
@@ -64,9 +75,11 @@ ver_out=$("$CADRE_BIN" --version)
 help_out=$("$CADRE_BIN" --help)
 grep -q "cadre ◈" <<<"$help_out" || fail "--help missing banner"
 grep -q -- "--backend" <<<"$help_out" || fail "--help missing --backend"
-grep -q -- "--version" <<<"$help_out" || fail "--help missing --version"
+grep -q -- "--agent" <<<"$help_out" || fail "--help missing --agent"
+grep -q -- "doctor" <<<"$help_out" || fail "--help missing doctor"
+grep -q -- "review" <<<"$help_out" || fail "--help missing review"
 
-for bad in "--backend" "--model" "--port" "--port 0" "--port 70000" "--port abc" "--join-file" "--app" "--app invalid" "--unknown-flag" "bogus-cmd"; do
+for bad in "--backend" "--model" "--agent" "--port" "--port 0" "--port 70000" "--port abc" "--join-file" "--app" "--app invalid" "--unknown-flag" "bogus-cmd"; do
   rc=0
   # shellcheck disable=SC2086
   "$CADRE_BIN" $bad >/dev/null 2>&1 || rc=$?
@@ -81,24 +94,70 @@ rc=0
 "$CADRE_BIN" --join-file "$work/does-not-exist" >/dev/null 2>&1 || rc=$?
 [ "$rc" -eq 1 ] || fail "expected exit 1 for missing --join-file, got $rc"
 
-# 2. Missing optional desktop clients fail cleanly with exit 1.
+# 2. Missing optional desktop/builder clients fail cleanly with exit 1.
 empty_bin="$work/empty-bin"
 mkdir -p "$empty_bin"
-rc=0
-PATH="$empty_bin" "$CADRE_BIN" chat >/dev/null 2>&1 || rc=$?
-[ "$rc" -eq 1 ] || fail "expected exit 1 when buzz is missing, got $rc"
+for missing_cmd in chat gui review rules; do
+  rc=0
+  PATH="$empty_bin" "$CADRE_BIN" "$missing_cmd" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 1 ] || fail "expected exit 1 when '$missing_cmd' client is missing, got $rc"
+done
 
-rc=0
-PATH="$empty_bin" "$CADRE_BIN" gui >/dev/null 2>&1 || rc=$?
-[ "$rc" -eq 1 ] || fail "expected exit 1 when berd is missing, got $rc"
-
-# 3. `chat` dispatches to buzz-app on PATH with GOOSE_TELEMETRY_OFF=1 and pass-through args.
+# 3. `chat` and `rules` dispatch with pass-through args.
 export STUB_OUT="$work/out.txt"
 PATH="$stubs:$PATH" "$CADRE_BIN" chat -- --relay wss://relay.example.test
 grep -q "CMD=buzz-app ARGS=--relay wss://relay.example.test TELEMETRY=1" "$STUB_OUT" ||
   fail "unexpected chat stub output: $(cat "$STUB_OUT")"
 
-# 4. Mock MeshLLM & Ollama HTTP servers (including OpenAI /v1/chat/completions).
+: >"$STUB_OUT"
+PATH="$stubs:$PATH" "$CADRE_BIN" rules -- generate --agents goose
+grep -q "CMD=ai-rules ARGS=generate --agents goose" "$STUB_OUT" ||
+  fail "unexpected rules stub output: $(cat "$STUB_OUT")"
+
+# 4. Declarative teammates (`cadre agents` & `--agent`) + Goose MCP config fixture (with secret env).
+mkdir -p "$XDG_CONFIG_HOME/cadre" "$XDG_CONFIG_HOME/goose"
+cat >"$XDG_CONFIG_HOME/cadre/agents.json" <<'JSON'
+[
+  {
+    "id": "reviewer",
+    "handle": "@reviewer",
+    "name": "Cadre Reviewer",
+    "role": "Diff & Security Auditor",
+    "description": "Audits git ranges locally.",
+    "avatar": "🔍",
+    "harness": "pi-acp",
+    "backend": "ollama",
+    "model": "qwen2.5-coder:7b",
+    "systemPrompt": "Focus on security invariants.",
+    "tools": ["git", "review"]
+  }
+]
+JSON
+
+cat >"$XDG_CONFIG_HOME/goose/config.yaml" <<'YAML'
+GOOSE_PROVIDER: cadre
+extensions:
+  memory:
+    name: Memory Vault
+    type: stdio
+    enabled: true
+    envs:
+      SUPER_SECRET_TOKEN: top-secret-do-not-leak-999
+  disabled_ext:
+    name: Legacy Tool
+    type: sse
+    enabled: false
+YAML
+
+agents_out=$("$CADRE_BIN" agents)
+grep -q "@reviewer" <<<"$agents_out" || fail "cadre agents missing @reviewer: $agents_out"
+grep -q "pi-acp" <<<"$agents_out" || fail "cadre agents missing harness: $agents_out"
+
+rc=0
+"$CADRE_BIN" --agent nonexistent >/dev/null 2>&1 || rc=$?
+[ "$rc" -eq 1 ] || fail "expected exit 1 for unknown --agent, got $rc"
+
+# 5. Mock MeshLLM & Ollama HTTP servers (including OpenAI /v1/chat/completions).
 mesh_port=$(free_port)
 python3 - "$mesh_port" <<'PY' &
 import http.server, json, sys
@@ -171,6 +230,23 @@ for _ in $(seq 1 30); do
   sleep 0.1
 done
 
+# `cadre doctor` inspects inference, harnesses, toolkit, and MCP extensions without leaking secrets.
+doctor_out=$(PATH="$stubs:$PATH" "$CADRE_BIN" doctor --port "$mesh_port")
+grep -q "mesh-llm   \[ready\]" <<<"$doctor_out" || fail "doctor missed ready mesh-llm: $doctor_out"
+grep -q "goose      \[ready\]" <<<"$doctor_out" || fail "doctor missed goose harness: $doctor_out"
+grep -q "review     \[ready\]" <<<"$doctor_out" || fail "doctor missed review tool: $doctor_out"
+grep -q "memory         \[ready\]" <<<"$doctor_out" || fail "doctor missed MCP memory extension: $doctor_out"
+grep -q "disabled_ext   \[disabled\]" <<<"$doctor_out" || fail "doctor missed disabled MCP extension: $doctor_out"
+if grep -q "top-secret-do-not-leak-999" <<<"$doctor_out"; then
+  fail "doctor leaked secret from config.yaml!"
+fi
+
+# `cadre review` wires local provider + model and prepends `review` subcommand for flags.
+: >"$STUB_OUT"
+PATH="$stubs:$PATH" "$CADRE_BIN" review --backend mesh --port "$mesh_port" -- -base main >/dev/null
+grep -q "CMD=review ARGS=review -base main PROVIDER=mesh MODEL=Qwen3-Test-4B TELEMETRY=1" "$STUB_OUT" ||
+  fail "unexpected review stub output: $(cat "$STUB_OUT")"
+
 # Built wrapper end-to-end with real `goose-cli` (`-- --help` exits 0 after provider discovery)
 "$CADRE_BIN" --backend auto --port "$mesh_port" -- --help >/dev/null
 
@@ -190,12 +266,20 @@ ollama_prov="$XDG_CONFIG_HOME/goose/custom_providers/cadre-ollama.json"
 [ "$(jq -r '.models[0].context_limit' "$ollama_prov")" = "32768" ] || fail "expected 32768 context_limit"
 [ "$(jq -r '.base_url' "$ollama_prov")" = "http://127.0.0.1:$ollama_port/v1" ] || fail "expected 127.0.0.1 base_url"
 
-# 5. Direct script assertions with stub `goose` and ephemeral daemon cleanup.
+# 6. Direct script assertions with stub `goose`, `--agent @reviewer`, and ephemeral daemon cleanup.
 if [ -n "$CADRE_SCRIPT" ]; then
   : >"$STUB_OUT"
   PATH="$stubs:$PATH" "$bash_bin" "$CADRE_SCRIPT" --backend auto --port "$mesh_port" -- --resume >/dev/null
   grep -q "MODEL=Qwen3-Test-4B" "$STUB_OUT" || fail "mesh auto model discovery failed: $(cat "$STUB_OUT")"
   grep -q "TELEMETRY=1" "$STUB_OUT" || fail "telemetry off not exported: $(cat "$STUB_OUT")"
+
+  # `--agent @reviewer` selects ollama backend, model, and `--system` prompt from agents.json
+  : >"$STUB_OUT"
+  PATH="$stubs:$PATH" "$bash_bin" "$CADRE_SCRIPT" --agent @reviewer --port "$ollama_port" >/dev/null
+  grep -q "PROVIDER=ollama MODEL=qwen2.5-coder:7b" "$STUB_OUT" ||
+    fail "--agent @reviewer did not select ollama/model: $(cat "$STUB_OUT")"
+  grep -q -- "--system Focus on security invariants." "$STUB_OUT" ||
+    fail "--agent @reviewer did not pass --system prompt: $(cat "$STUB_OUT")"
 
   warn_err=$({ PATH="$stubs:$PATH" "$bash_bin" "$CADRE_SCRIPT" --backend mesh --port "$mesh_port" --model NonExistentModel >/dev/null; } 2>&1)
   grep -q "Warning: model 'NonExistentModel' is not served" <<<"$warn_err" ||
@@ -254,7 +338,7 @@ EOF
   fi
 fi
 
-# 6. `cadre web` / `server.py` serves SPA fallback, security headers, live /api/status, and loopback /api/chat.
+# 7. `cadre web` / `server.py` serves SPA fallback, security headers, live /api/status (agents + MCP), and /api/chat.
 web_port=$(free_port)
 CADRE_WEB_PORT="$web_port" "$CADRE_BIN" web --backend mesh --port "$mesh_port" >"$work/web.log" 2>&1 &
 web_pid=$!
@@ -273,7 +357,6 @@ done
   fail "cadre web failed health check on port $web_port"
 }
 
-# Security headers + SPA fallback for extensionless deep routes + 404 for missing assets
 headers=$(curl -fsSI "http://127.0.0.1:$web_port/")
 grep -qi "content-security-policy:" <<<"$headers" || fail "missing CSP header"
 grep -qi "x-content-type-options: nosniff" <<<"$headers" || fail "missing nosniff header"
@@ -284,13 +367,16 @@ curl -fsS "http://127.0.0.1:$web_port/deep/spa/route" | grep -qi '<!doctype html
 missing_code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$web_port/missing-asset.js")
 [ "$missing_code" = "404" ] || fail "expected 404 on /missing-asset.js, got $missing_code"
 
-# Live /api/status probes our mock MeshLLM server
 status_json=$(curl -fsS "http://127.0.0.1:$web_port/api/status")
 [ "$(jq -r '.activeBackend' <<<"$status_json")" = "mesh" ] || fail "unexpected activeBackend: $status_json"
 [ "$(jq -r '.defaultModel' <<<"$status_json")" = "Qwen3-Test-4B" ] || fail "unexpected defaultModel: $status_json"
 [ "$(jq -r '.chatEnabled' <<<"$status_json")" = "true" ] || fail "expected chatEnabled=true on loopback"
+[ "$(jq -r '.agents[0].handle' <<<"$status_json")" = "@reviewer" ] || fail "expected @reviewer in /api/status: $status_json"
+[ "$(jq -r '.extensions[0].name' <<<"$status_json")" = "Memory Vault" ] || fail "expected Memory Vault extension: $status_json"
+if grep -q "top-secret-do-not-leak-999" <<<"$status_json"; then
+  fail "/api/status leaked secret from config.yaml: $status_json"
+fi
 
-# Loopback /api/chat proxies to local MeshLLM (same-origin allowed, simple text/plain & cross-origin rejected)
 chat_resp=$(curl -fsS -X POST "http://127.0.0.1:$web_port/api/chat" \
   -H 'Content-Type: application/json' \
   -H "Origin: http://127.0.0.1:$web_port" \
@@ -311,7 +397,7 @@ xorigin_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:
 kill -TERM "$web_pid" 2>/dev/null || true
 wait "$web_pid" 2>/dev/null || true
 
-# 7. `server.py` security invariants: SSRF upstream guard and non-loopback /api/chat gate.
+# 8. `server.py` security invariants: SSRF upstream guard and non-loopback /api/chat gate.
 if [ -n "$SERVER_PY" ]; then
   static_stub="$work/static"
   mkdir -p "$static_stub"

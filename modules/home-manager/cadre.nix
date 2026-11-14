@@ -10,6 +10,7 @@
 
 let
   cfg = config.services.cadre;
+  agentsLib = import ../shared/agents.nix { inherit lib; };
   flakePkgs = packages.${pkgs.stdenv.hostPlatform.system};
   # nixpkgs ships an unrelated Ruby gem at `pkgs.cadre`, so only prefer `pkgs.cadre`
   # when the user applied this flake's overlay (`cadre-ai` is unambiguous).
@@ -41,6 +42,28 @@ let
       "qwen2.5-coder"
     else
       "Qwen3-8B-Q4_K_M";
+
+  agentsJson = (pkgs.formats.json { }).generate "cadre-agents.json" (
+    agentsLib.serializeAgents {
+      inherit (cfg) agents;
+      defaultBackend = cfg.backend;
+      inherit defaultModel;
+    }
+  );
+
+  harnessPkgFor =
+    h:
+    {
+      goose = stack.goose-cli;
+      buzz-agent = stack.buzz-agent or null;
+      pi-acp = stack.pi-acp or null;
+      amp-acp = stack.amp-acp or null;
+    }
+    .${h};
+
+  agentHarnessPkgs = lib.unique (
+    lib.filter (p: p != null) (map (a: harnessPkgFor a.harness) (lib.attrValues cfg.agents))
+  );
 
   providerConfig = {
     name = "cadre";
@@ -164,6 +187,8 @@ in
       description = "Whether to install goose and cadre CLI, set up for the local node.";
     };
 
+    tools.enable = lib.mkEnableOption "Block builder toolkit (review, ai-rules, braindump, buzz-cli)";
+
     desktop.enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -172,13 +197,47 @@ in
         with desktop application menu entries.
       '';
     };
+
+    agents = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.submodule agentsLib.agentSubmodule);
+      default = { };
+      example = lib.literalExpression ''
+        {
+          reviewer = {
+            name = "Cadre Reviewer";
+            role = "Code Reviewer & Security Auditor";
+            harness = "goose";
+            tools = [ "git" "review" ];
+          };
+        }
+      '';
+      description = ''
+        Declarative AI teammates exposed to `cadre session --agent <id>`,
+        `cadre agents`, and `cadre web`.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
-      (lib.mkIf (cfg.goose.enable || (cfg.desktop.enable && pkgs.stdenv.hostPlatform.isLinux)) {
-        home.packages = [ cadrePkg ];
+      {
+        assertions = lib.mapAttrsToList (name: _: {
+          assertion = builtins.match "^[a-zA-Z0-9_-]+$" name != null;
+          message = "services.cadre.agents name '${name}' must match ^[a-zA-Z0-9_-]+$";
+        }) cfg.agents;
+      }
+
+      (lib.mkIf (cfg.agents != { }) {
+        xdg.configFile."cadre/agents.json".source = agentsJson;
+        home.packages = agentHarnessPkgs;
       })
+
+      (lib.mkIf
+        (cfg.goose.enable || cfg.tools.enable || (cfg.desktop.enable && pkgs.stdenv.hostPlatform.isLinux))
+        {
+          home.packages = [ cadrePkg ];
+        }
+      )
 
       (lib.mkIf cfg.goose.enable {
         home.packages = [ stack.goose-cli ];
@@ -190,6 +249,15 @@ in
         xdg.configFile = {
           "goose/custom_providers/cadre.json".text = builtins.toJSON providerConfig;
         };
+      })
+
+      (lib.mkIf cfg.tools.enable {
+        home.packages = lib.concatLists [
+          (lib.optional (stack ? block-review) stack.block-review)
+          (lib.optional (stack ? ai-rules) stack.ai-rules)
+          (lib.optional (stack ? braindump) stack.braindump)
+          (lib.optional (stack ? buzz-cli) stack.buzz-cli)
+        ];
       })
 
       (lib.mkIf (cfg.desktop.enable && pkgs.stdenv.hostPlatform.isLinux) {

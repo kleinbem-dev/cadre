@@ -1,5 +1,5 @@
-# The home-manager module in a user's configuration: the user service and the
-# agent tools build.
+# The home-manager module in a user's configuration: the user service,
+# declarative teammates, and builder tools build cleanly.
 {
   pkgs,
   home-manager,
@@ -7,11 +7,12 @@
 }:
 
 let
-  # WORKAROUND(berd): locked kleinbem/nix-packages pins berd 0.6.4 without aws-lc in buildInputs (updated in https://github.com/NixOS/nixpkgs/pull/580616) — remove when flake.lock includes berd >= 0.6.5.
+  # Stub heavy Tauri GUI apps and extra Rust workspace crates so headless HM checks stay fast.
   testPkgs = pkgs.extend (
     final: _prev: {
       berd = final.writeShellScriptBin "berd" "exit 0";
       buzz-app = final.writeShellScriptBin "buzz-app" "exit 0";
+      ai-rules = final.writeShellScriptBin "ai-rules" "exit 0";
     }
   );
 
@@ -27,10 +28,16 @@ let
         };
         services.cadre = {
           enable = true;
+          tools.enable = true;
           desktop.enable = true;
           models = [ "Qwen3-8B-Q4_K_M" ];
           joinFile = "/run/user/1000/cadre-join";
           extraArgs = [ "--hm-extra-flag" ];
+          agents.reviewer = {
+            name = "Cadre Reviewer";
+            harness = "pi-acp";
+            tools = [ "review" ];
+          };
         };
       }
     ];
@@ -87,10 +94,18 @@ pkgs.runCommand "cadre-home-manager" { } ''
   # Verify our `cadre` CLI is installed, never nixpkgs' Ruby gem `cadre-1.0.4`.
   test "$(${files}/home-path/bin/cadre --version)" = "cadre 0.1.0"
   test -x ${files}/home-path/bin/goose
+  test -x ${files}/home-path/bin/pi-acp
+  test -x ${files}/home-path/bin/review
+  test -x ${files}/home-path/bin/braindump
   test -x ${files}/home-path/bin/berd
   test -f ${files}/home-path/share/applications/cadre-berd.desktop
   test -f ${files}/home-path/share/applications/cadre-buzz.desktop
   grep -q "GOOSE_TELEMETRY_OFF=\"1\"" ${files}/home-path/etc/profile.d/hm-session-vars.sh
+
+  # Declarative teammates written to ~/.config/cadre/agents.json
+  test -f ${files}/home-files/.config/cadre/agents.json
+  grep -q '@reviewer' ${files}/home-files/.config/cadre/agents.json
+  grep -q 'pi-acp' ${files}/home-files/.config/cadre/agents.json
 
   # Goose custom provider provisioned declaratively (mesh.json left to runtime writer)
   test -f ${files}/home-files/.config/goose/custom_providers/cadre.json

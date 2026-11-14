@@ -1,15 +1,17 @@
 # The module on a minimal NixOS system: it evaluates, and the system with the
-# MeshLLM unit and the agent tools builds.
+# MeshLLM unit, declarative teammates, and ACP agent harnesses builds.
 { pkgs, module }:
 
 let
   nixos = pkgs.nixos {
     imports = [ module ];
     nixpkgs.overlays = [
-      # WORKAROUND(berd): locked kleinbem/nix-packages pins berd 0.6.4 without aws-lc in buildInputs (updated in https://github.com/NixOS/nixpkgs/pull/580616) — remove when flake.lock includes berd >= 0.6.5.
+      # Stub heavy Tauri GUI apps and extra Rust workspace crates so headless module checks stay fast.
       (final: _prev: {
         berd = final.writeShellScriptBin "berd" "exit 0";
         buzz-app = final.writeShellScriptBin "buzz-app" "exit 0";
+        buzz-agent = final.writeShellScriptBin "buzz-agent" "exit 0";
+        ai-rules = final.writeShellScriptBin "ai-rules" "exit 0";
       })
     ];
     services.cadre = {
@@ -17,20 +19,49 @@ let
       models = [ "Qwen3-8B-Q4_K_M" ];
       joinFile = "/run/secrets/cadre-join";
       extraArgs = [ "--test-extra-arg" ];
+      tools.enable = true;
+      desktop.enable = true;
+      agents.reviewer = {
+        name = "Cadre Reviewer";
+        role = "Security & Diff Auditor";
+        harness = "pi-acp";
+        systemPrompt = "Check every diff for regressions.";
+        tools = [
+          "git"
+          "review"
+        ];
+      };
       web = {
         enable = true;
         port = 8384;
         openFirewall = true;
         enableChatProxy = true;
       };
-      buzz.agents.helper = {
-        relayUrl = "wss://buzz.example.com";
-        privateKeyFile = "/run/secrets/buzz-helper-key";
-        respondTo = "allowlist";
-        owner = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d";
-        allowlist = [ "deadbeef" ];
+      buzz.agents = {
+        helper = {
+          relayUrl = "wss://buzz.example.com";
+          privateKeyFile = "/run/secrets/buzz-helper-key";
+          respondTo = "allowlist";
+          owner = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d";
+          allowlist = [ "deadbeef" ];
+        };
+        piBot = {
+          relayUrl = "wss://buzz.example.com";
+          privateKeyFile = "/run/secrets/buzz-pi-key";
+          harness = "pi-acp";
+          sessionPolicy = "thread";
+          systemPrompt = "Answer concisely in threads.";
+          respondTo = "owner-only";
+          owner = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d";
+        };
+        nativeBot = {
+          relayUrl = "wss://buzz.example.com";
+          privateKeyFile = "/run/secrets/buzz-native-key";
+          harness = "buzz-agent";
+          respondTo = "owner-only";
+          owner = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d";
+        };
       };
-      desktop.enable = true;
     };
     boot.loader.grub.enable = false;
     documentation.enable = false;
@@ -42,7 +73,10 @@ let
   };
   unit = nixos.config.systemd.units."mesh-llm.service".unit;
   buzzUnit = nixos.config.systemd.units."cadre-buzz-helper.service".unit;
+  piUnit = nixos.config.systemd.units."cadre-buzz-piBot.service".unit;
+  nativeUnit = nixos.config.systemd.units."cadre-buzz-nativeBot.service".unit;
   webUnit = nixos.config.systemd.units."cadre-web.service".unit;
+  agentsEtc = nixos.config.environment.etc."cadre/agents.json".source;
 
   nixosOwnerWarning = pkgs.nixos {
     imports = [ module ];
@@ -119,18 +153,38 @@ pkgs.runCommand "cadre-module" { } ''
   grep -q 'LoadCredential=join:/run/secrets/cadre-join' ${unit}/mesh-llm.service
   grep -q -- '--test-extra-arg' ${unit}/mesh-llm.service
   grep -q 'WantedBy=multi-user.target' ${unit}/mesh-llm.service
+
   grep -q 'BUZZ_RELAY_URL=wss://buzz.example.com' ${buzzUnit}/cadre-buzz-helper.service
+  grep -q 'BUZZ_ACP_AGENT_COMMAND=goose' ${buzzUnit}/cadre-buzz-helper.service
+  grep -q 'BUZZ_ACP_AGENT_ARGS=acp' ${buzzUnit}/cadre-buzz-helper.service
   grep -q 'BUZZ_ACP_RESPOND_TO=allowlist' ${buzzUnit}/cadre-buzz-helper.service
   grep -q 'BUZZ_ACP_AGENT_OWNER=3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d' ${buzzUnit}/cadre-buzz-helper.service
   grep -q 'BUZZ_ACP_RESPOND_TO_ALLOWLIST=deadbeef' ${buzzUnit}/cadre-buzz-helper.service
   grep -q 'LoadCredential=key:/run/secrets/buzz-helper-key' ${buzzUnit}/cadre-buzz-helper.service
   grep -q 'SystemCallFilter=@system-service' ${buzzUnit}/cadre-buzz-helper.service
   grep -q 'UMask=0077' ${buzzUnit}/cadre-buzz-helper.service
+
+  # Non-goose ACP adapters: zero-arg stdio launch, thread scoping, system prompt file, and buzz-agent local OpenAI wiring
+  grep -q 'BUZZ_ACP_AGENT_COMMAND=pi-acp' ${piUnit}/cadre-buzz-piBot.service
+  grep -q 'Environment="BUZZ_ACP_AGENT_ARGS="' ${piUnit}/cadre-buzz-piBot.service
+  grep -q 'BUZZ_ACP_SESSION_POLICY=thread' ${piUnit}/cadre-buzz-piBot.service
+  grep -q 'BUZZ_ACP_SYSTEM_PROMPT_FILE=' ${piUnit}/cadre-buzz-piBot.service
+
+  grep -q 'BUZZ_ACP_AGENT_COMMAND=buzz-agent' ${nativeUnit}/cadre-buzz-nativeBot.service
+  grep -q 'BUZZ_AGENT_PROVIDER=openai' ${nativeUnit}/cadre-buzz-nativeBot.service
+  grep -q 'OPENAI_COMPAT_BASE_URL=http://127.0.0.1:9337/v1' ${nativeUnit}/cadre-buzz-nativeBot.service
+  grep -q 'OPENAI_COMPAT_API=chat' ${nativeUnit}/cadre-buzz-nativeBot.service
+
   grep -q 'server.py' ${webUnit}/cadre-web.service
   grep -q '8384' ${webUnit}/cadre-web.service
+  grep -q -- '--agents-file=' ${webUnit}/cadre-web.service
   grep -q -- '--enable-chat-proxy' ${webUnit}/cadre-web.service
   grep -q 'DynamicUser=true' ${webUnit}/cadre-web.service
   grep -q 'UMask=0077' ${webUnit}/cadre-web.service
+
+  grep -q '"handle": "@reviewer"' ${agentsEtc} || grep -q '"handle":"@reviewer"' ${agentsEtc}
+  grep -q '"harness": "pi-acp"' ${agentsEtc} || grep -q '"harness":"pi-acp"' ${agentsEtc}
+
   test "${
     if (builtins.elem 8384 nixos.config.networking.firewall.allowedTCPPorts) then "1" else "0"
   }" = "1"
@@ -139,6 +193,9 @@ pkgs.runCommand "cadre-module" { } ''
   test -x ${nixos.config.system.path}/bin/cadre
   test "$(${nixos.config.system.path}/bin/cadre --version)" = "cadre 0.1.0"
   test -x ${nixos.config.system.path}/bin/goose
+  test -x ${nixos.config.system.path}/bin/pi-acp
+  test -x ${nixos.config.system.path}/bin/review
+  test -x ${nixos.config.system.path}/bin/braindump
   test -x ${nixos.config.system.path}/bin/berd
   grep -q GOOSE_TELEMETRY_OFF ${nixos.config.system.build.setEnvironment}
 

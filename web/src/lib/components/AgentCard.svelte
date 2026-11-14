@@ -11,6 +11,7 @@
 	} = $props();
 
 	let isMesh = $derived(agent.backend === 'mesh');
+	let harnessLabel = $derived(agent.harness ?? 'goose');
 </script>
 
 <article
@@ -50,6 +51,13 @@
 	</div>
 
 	<div class="pt-3 border-t border-zinc-100 dark:border-zinc-800/60 flex flex-col gap-2.5 text-xs">
+		<div class="flex items-center justify-between text-[11px] font-mono gap-2">
+			<span class="text-zinc-400 shrink-0">Harness</span>
+			<span class="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
+				{harnessLabel}
+			</span>
+		</div>
+
 		<div class="flex items-center justify-between text-[11px] font-mono gap-2">
 			<span class="text-zinc-400 shrink-0">Model</span>
 			<span class="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 truncate">

@@ -1,6 +1,6 @@
 # services.cadre: private AI teammates on your own compute.
 #
-# Connects Goose agents to your choice of local inference backend:
+# Connects Goose and ACP agents to your choice of local inference backend:
 #   - MeshLLM (services.mesh-llm): distributed inference across your machines
 #   - Ollama: local runner on this device
 #
@@ -14,9 +14,41 @@
 
 let
   cfg = config.services.cadre;
+  agentsLib = import ../shared/agents.nix { inherit lib; };
+
   cadrePkg = pkgs.cadre.override {
     mesh-llm = if cfg.backend == "mesh" then cfg.package else null;
   };
+
+  defaultModel =
+    if cfg.models != [ ] then
+      builtins.head cfg.models
+    else if cfg.backend == "ollama" then
+      "qwen2.5-coder"
+    else
+      "Qwen3-8B-Q4_K_M";
+
+  agentsJson = (pkgs.formats.json { }).generate "cadre-agents.json" (
+    agentsLib.serializeAgents {
+      inherit (cfg) agents;
+      defaultBackend = cfg.backend;
+      inherit defaultModel;
+    }
+  );
+
+  harnessPkgFor =
+    h:
+    {
+      goose = pkgs.goose-cli;
+      buzz-agent = pkgs.buzz-agent or null;
+      pi-acp = pkgs.pi-acp or null;
+      amp-acp = pkgs.amp-acp or null;
+    }
+    .${h};
+
+  agentHarnessPkgs = lib.unique (
+    lib.filter (p: p != null) (map (a: harnessPkgFor a.harness) (lib.attrValues cfg.agents))
+  );
 in
 {
   options.services.cadre = {
@@ -135,6 +167,8 @@ in
       description = "Whether to install goose and cadre CLI, set up for the local node.";
     };
 
+    tools.enable = lib.mkEnableOption "Block builder toolkit (review, ai-rules, braindump, buzz-cli)";
+
     desktop.enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -143,9 +177,33 @@ in
         alongside the CLI.
       '';
     };
+
+    agents = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.submodule agentsLib.agentSubmodule);
+      default = { };
+      example = lib.literalExpression ''
+        {
+          reviewer = {
+            name = "Cadre Reviewer";
+            role = "Code Reviewer & Security Auditor";
+            harness = "goose";
+            tools = [ "git" "review" ];
+          };
+        }
+      '';
+      description = ''
+        Declarative AI teammates exposed to `cadre session --agent <id>`,
+        `cadre agents`, and the Cadre web dashboard.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = lib.mapAttrsToList (name: _: {
+      assertion = builtins.match "^[a-zA-Z0-9_-]+$" name != null;
+      message = "services.cadre.agents name '${name}' must match ^[a-zA-Z0-9_-]+$";
+    }) cfg.agents;
+
     services = {
       ollama = lib.mkIf (cfg.backend == "ollama") {
         enable = lib.mkDefault true;
@@ -206,6 +264,7 @@ in
               cfg.backend
             ]
             ++ lib.optional (cfg.models != [ ]) "--default-model=${builtins.head cfg.models}"
+            ++ lib.optional (cfg.agents != { }) "--agents-file=${agentsJson}"
             ++ lib.optional cfg.web.enableChatProxy "--enable-chat-proxy"
           );
           Restart = "on-failure";
@@ -244,7 +303,11 @@ in
     };
 
     environment = lib.mkMerge [
-      (lib.mkIf (cfg.goose.enable || cfg.desktop.enable) {
+      (lib.mkIf (cfg.agents != { }) {
+        etc."cadre/agents.json".source = agentsJson;
+        systemPackages = agentHarnessPkgs;
+      })
+      (lib.mkIf (cfg.goose.enable || cfg.tools.enable || cfg.desktop.enable) {
         systemPackages = [ cadrePkg ];
       })
       (lib.mkIf cfg.goose.enable {
@@ -254,6 +317,14 @@ in
           GOOSE_TELEMETRY_OFF = lib.mkDefault "1";
           CADRE_BACKEND = lib.mkDefault cfg.backend;
         };
+      })
+      (lib.mkIf cfg.tools.enable {
+        systemPackages = lib.concatLists [
+          (lib.optional (pkgs ? block-review) pkgs.block-review)
+          (lib.optional (pkgs ? ai-rules) pkgs.ai-rules)
+          (lib.optional (pkgs ? braindump) pkgs.braindump)
+          (lib.optional (pkgs ? buzz-cli) pkgs.buzz-cli)
+        ];
       })
       (lib.mkIf cfg.desktop.enable {
         systemPackages = lib.concatLists [

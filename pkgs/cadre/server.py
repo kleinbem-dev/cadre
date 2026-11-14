@@ -2,22 +2,24 @@
 """Lightweight static SPA + local-inference telemetry server for Cadre Web."""
 
 import argparse
-from http import HTTPStatus
 import http.client
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import mimetypes
 import os
+import shutil
 import signal
 import socket
 import sys
 import threading
 import time
 import urllib.parse
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MAX_CHAT_BODY_BYTES = 262_144
 STATUS_CACHE_TTL_SEC = 2.0
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+ACP_HARNESSES = ("goose", "buzz-agent", "pi-acp", "amp-acp")
 
 CSP_POLICY = (
     "default-src 'self'; "
@@ -36,12 +38,20 @@ def parse_loopback_endpoint(raw: str, flag: str) -> tuple[str, int]:
     parsed = urllib.parse.urlparse(raw)
     host = parsed.hostname or ""
     port = parsed.port or 0
-    if parsed.scheme != "http" or host not in LOOPBACK_HOSTS or not (1 <= port <= 65535):
-        raise ValueError(f"{flag} must be an http:// loopback URL with an explicit port, got: {raw!r}")
+    if (
+        parsed.scheme != "http"
+        or host not in LOOPBACK_HOSTS
+        or not (1 <= port <= 65535)
+    ):
+        raise ValueError(
+            f"{flag} must be an http:// loopback URL with an explicit port, got: {raw!r}"
+        )
     return host, port
 
 
-def http_get_json(endpoint: tuple[str, int], path: str, timeout: float = 1.5) -> tuple[dict | None, int]:
+def http_get_json(
+    endpoint: tuple[str, int], path: str, timeout: float = 1.5
+) -> tuple[dict | None, int]:
     start = time.monotonic()
     conn = http.client.HTTPConnection(endpoint[0], endpoint[1], timeout=timeout)
     try:
@@ -59,7 +69,9 @@ def http_get_json(endpoint: tuple[str, int], path: str, timeout: float = 1.5) ->
         conn.close()
 
 
-def http_post_json(endpoint: tuple[str, int], path: str, body: dict, timeout: float = 120.0) -> tuple[int, dict | str]:
+def http_post_json(
+    endpoint: tuple[str, int], path: str, body: dict, timeout: float = 120.0
+) -> tuple[int, dict | str]:
     encoded = json.dumps(body).encode("utf-8")
     conn = http.client.HTTPConnection(endpoint[0], endpoint[1], timeout=timeout)
     try:
@@ -87,9 +99,151 @@ def _pick_model(models: list[str], default_model: str, fallback: str) -> str:
     return default_model or fallback
 
 
+def _resolve_agents_path(explicit: str) -> str:
+    candidates = [explicit, os.environ.get("CADRE_AGENTS_FILE", "")]
+    xdg_cfg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+        os.path.expanduser("~"), ".config"
+    )
+    candidates.append(os.path.join(xdg_cfg, "cadre", "agents.json"))
+    candidates.append("/etc/cadre/agents.json")
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return ""
+
+
+def load_configured_agents(explicit_path: str) -> list[dict]:
+    path = _resolve_agents_path(explicit_path)
+    if not path:
+        return []
+    try:
+        with open(path, "rb") as f:
+            raw = json.loads(f.read(262_144).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return []
+    if not isinstance(raw, list):
+        return []
+
+    agents: list[dict] = []
+    for item in raw[:32]:
+        if not isinstance(item, dict):
+            continue
+        agent_id = str(item.get("id") or "").strip()
+        if not agent_id:
+            continue
+        harness = str(item.get("harness") or "goose").strip()
+        if harness not in ACP_HARNESSES:
+            harness = "goose"
+        backend = str(item.get("backend") or "mesh").strip()
+        if backend not in ("mesh", "ollama"):
+            backend = "mesh"
+        raw_tools = item.get("tools")
+        tools = (
+            [str(t).strip() for t in raw_tools if str(t).strip()][:16]
+            if isinstance(raw_tools, list)
+            else []
+        )
+        entry: dict = {
+            "id": agent_id,
+            "handle": str(item.get("handle") or f"@{agent_id}").strip(),
+            "name": str(item.get("name") or agent_id).strip(),
+            "role": str(item.get("role") or "Autonomous AI Teammate").strip(),
+            "description": str(
+                item.get("description") or "Private AI teammate on local compute."
+            ).strip(),
+            "avatar": str(item.get("avatar") or "◈").strip() or "◈",
+            "harness": harness,
+            "backend": backend,
+            "model": str(item.get("model") or "").strip(),
+            "tools": tools,
+            "status": "idle",
+        }
+        sys_prompt = item.get("systemPrompt")
+        if isinstance(sys_prompt, str) and sys_prompt.strip():
+            entry["systemPrompt"] = sys_prompt.strip()[:16_384]
+        agents.append(entry)
+    return agents
+
+
+def scan_goose_extensions(config_path: str | None = None) -> list[dict]:
+    """Extract only safe metadata (id, name, type, enabled) from Goose config.yaml."""
+    if not config_path:
+        xdg_cfg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+            os.path.expanduser("~"), ".config"
+        )
+        config_path = os.path.join(xdg_cfg, "goose", "config.yaml")
+    if not os.path.isfile(config_path):
+        return []
+    try:
+        with open(config_path, "rb") as f:
+            lines = f.read(262_144).decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+    in_extensions = False
+    current: dict | None = None
+    results: list[dict] = []
+
+    def _strip_scalar(val: str) -> str:
+        v = val.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+            return v[1:-1]
+        return v
+
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip(" "))
+        if indent == 0:
+            if current is not None:
+                results.append(current)
+                current = None
+            in_extensions = stripped == "extensions:"
+            continue
+        if not in_extensions:
+            continue
+        if indent == 2 and stripped.endswith(":") and ":" not in stripped[:-1]:
+            if current is not None:
+                results.append(current)
+            ext_id = _strip_scalar(stripped[:-1])
+            if ext_id:
+                current = {
+                    "id": ext_id,
+                    "name": ext_id,
+                    "type": "stdio",
+                    "enabled": True,
+                }
+            else:
+                current = None
+        elif indent == 4 and current is not None and ":" in stripped:
+            key, raw_val = stripped.split(":", 1)
+            key = key.strip()
+            val = _strip_scalar(raw_val)
+            if key == "name" and val:
+                current["name"] = val[:64]
+            elif key == "type" and val:
+                current["type"] = val[:32]
+            elif key == "enabled":
+                current["enabled"] = val.lower() not in ("false", "0", "no", "off")
+
+    if current is not None:
+        results.append(current)
+    return results[:32]
+
+
+def probe_harnesses() -> list[dict]:
+    return [
+        {"id": name, "available": shutil.which(name) is not None}
+        for name in ACP_HARNESSES
+    ]
+
+
 def resolve_address_family(host: str, port: int) -> socket.AddressFamily:
     try:
-        infos = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM, 0, socket.AI_PASSIVE)
+        infos = socket.getaddrinfo(
+            host, port, socket.AF_UNSPEC, socket.SOCK_STREAM, 0, socket.AI_PASSIVE
+        )
         if infos:
             return infos[0][0]
     except socket.gaierror:
@@ -101,7 +255,9 @@ class DualStackHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
     def __init__(self, server_address: tuple[str, int], handler_cls):
-        self.address_family = resolve_address_family(server_address[0], server_address[1])
+        self.address_family = resolve_address_family(
+            server_address[0], server_address[1]
+        )
         super().__init__(server_address, handler_cls)
 
 
@@ -113,12 +269,14 @@ class StatusCache:
         mesh_ep: tuple[str, int],
         ollama_ep: tuple[str, int],
         chat_enabled: bool,
+        agents_file: str = "",
     ):
         self.configured_backend = configured_backend
         self.default_model = default_model
         self.mesh_ep = mesh_ep
         self.ollama_ep = ollama_ep
         self.chat_enabled = chat_enabled
+        self.agents_file = agents_file
         self.hostname = socket.gethostname() or "localhost"
         self._lock = threading.Lock()
         self._cached_at = 0.0
@@ -127,7 +285,11 @@ class StatusCache:
     def get(self, force: bool = False) -> dict:
         now = time.monotonic()
         with self._lock:
-            if not force and self._payload is not None and (now - self._cached_at) < STATUS_CACHE_TTL_SEC:
+            if (
+                not force
+                and self._payload is not None
+                and (now - self._cached_at) < STATUS_CACHE_TTL_SEC
+            ):
                 return self._payload
         payload = self._probe()
         with self._lock:
@@ -145,31 +307,47 @@ class StatusCache:
             if inv is not None:
                 raw_models = inv.get("data")
                 if isinstance(raw_models, list):
-                    mesh_models = [str(m["id"]) for m in raw_models if isinstance(m, dict) and m.get("id")]
-                nodes.append({
-                    "id": "local-mesh",
-                    "host": self.hostname,
-                    "nodeType": "gpu-box",
-                    "backend": "mesh",
-                    "activeModel": _pick_model(mesh_models, self.default_model, "idle"),
-                    "models": mesh_models,
-                    "vramUsedGb": 0.0,
-                    "vramTotalGb": 0.0,
-                    "tokensPerSec": 0.0,
-                    "latencyMs": latency_ms,
-                    "status": "healthy" if mesh_models else "degraded",
-                })
+                    mesh_models = [
+                        str(m["id"])
+                        for m in raw_models
+                        if isinstance(m, dict) and m.get("id")
+                    ]
+                nodes.append(
+                    {
+                        "id": "local-mesh",
+                        "host": self.hostname,
+                        "nodeType": "gpu-box",
+                        "backend": "mesh",
+                        "activeModel": _pick_model(
+                            mesh_models, self.default_model, "idle"
+                        ),
+                        "models": mesh_models,
+                        "vramUsedGb": 0.0,
+                        "vramTotalGb": 0.0,
+                        "tokensPerSec": 0.0,
+                        "latencyMs": latency_ms,
+                        "status": "healthy" if mesh_models else "degraded",
+                    }
+                )
 
         if self.configured_backend in ("auto", "ollama"):
             tags, latency_ms = http_get_json(self.ollama_ep, "/api/tags")
             if tags is not None:
                 raw_tags = tags.get("models")
                 if isinstance(raw_tags, list):
-                    ollama_models = [str(m["name"]) for m in raw_tags if isinstance(m, dict) and m.get("name")]
+                    ollama_models = [
+                        str(m["name"])
+                        for m in raw_tags
+                        if isinstance(m, dict) and m.get("name")
+                    ]
                 vram_used_gb = 0.0
                 active_ollama = _pick_model(ollama_models, self.default_model, "idle")
                 ps_data, _ = http_get_json(self.ollama_ep, "/api/ps", timeout=1.0)
-                if ps_data and isinstance(ps_data.get("models"), list) and ps_data["models"]:
+                if (
+                    ps_data
+                    and isinstance(ps_data.get("models"), list)
+                    and ps_data["models"]
+                ):
                     first_loaded = ps_data["models"][0]
                     if isinstance(first_loaded, dict):
                         active_ollama = str(first_loaded.get("name") or active_ollama)
@@ -179,26 +357,32 @@ class StatusCache:
                             if isinstance(m, dict)
                         )
                         vram_used_gb = round(vram_bytes / (1024**3), 1)
-                nodes.append({
-                    "id": "local-ollama",
-                    "host": self.hostname,
-                    "nodeType": "laptop",
-                    "backend": "ollama",
-                    "activeModel": active_ollama,
-                    "models": ollama_models,
-                    "vramUsedGb": vram_used_gb,
-                    "vramTotalGb": 0.0,
-                    "tokensPerSec": 0.0,
-                    "latencyMs": latency_ms,
-                    "status": "healthy" if ollama_models else "degraded",
-                })
+                nodes.append(
+                    {
+                        "id": "local-ollama",
+                        "host": self.hostname,
+                        "nodeType": "laptop",
+                        "backend": "ollama",
+                        "activeModel": active_ollama,
+                        "models": ollama_models,
+                        "vramUsedGb": vram_used_gb,
+                        "vramTotalGb": 0.0,
+                        "tokensPerSec": 0.0,
+                        "latencyMs": latency_ms,
+                        "status": "healthy" if ollama_models else "degraded",
+                    }
+                )
 
         if mesh_models:
             active_backend = "mesh"
-            resolved_model = _pick_model(mesh_models, self.default_model, "Qwen3-8B-Q4_K_M")
+            resolved_model = _pick_model(
+                mesh_models, self.default_model, "Qwen3-8B-Q4_K_M"
+            )
         elif ollama_models:
             active_backend = "ollama"
-            resolved_model = _pick_model(ollama_models, self.default_model, "qwen2.5-coder")
+            resolved_model = _pick_model(
+                ollama_models, self.default_model, "qwen2.5-coder"
+            )
         elif any(n["backend"] == "mesh" for n in nodes):
             active_backend = "mesh"
             resolved_model = self.default_model or "Qwen3-8B-Q4_K_M"
@@ -208,8 +392,15 @@ class StatusCache:
         else:
             active_backend = "standby"
             resolved_model = self.default_model or (
-                "qwen2.5-coder" if self.configured_backend == "ollama" else "Qwen3-8B-Q4_K_M"
+                "qwen2.5-coder"
+                if self.configured_backend == "ollama"
+                else "Qwen3-8B-Q4_K_M"
             )
+
+        agents = load_configured_agents(self.agents_file)
+        for agent in agents:
+            if not agent["model"]:
+                agent["model"] = resolved_model
 
         return {
             "activeBackend": active_backend,
@@ -218,6 +409,9 @@ class StatusCache:
             "chatEnabled": self.chat_enabled,
             "host": self.hostname,
             "nodes": nodes,
+            "agents": agents,
+            "harnesses": probe_harnesses(),
+            "extensions": scan_goose_extensions(),
         }
 
 
@@ -237,7 +431,12 @@ def make_handler(
         parsed_origin = urllib.parse.urlparse(origin_header)
         if parsed_origin.scheme not in ("http", "https") or not parsed_origin.netloc:
             return False
-        if parsed_origin.path not in ("", "/") or parsed_origin.params or parsed_origin.query or parsed_origin.fragment:
+        if (
+            parsed_origin.path not in ("", "/")
+            or parsed_origin.params
+            or parsed_origin.query
+            or parsed_origin.fragment
+        ):
             return False
         req_host = host_header.strip().lower()
         if not req_host or parsed_origin.netloc.lower() != req_host:
@@ -245,7 +444,9 @@ def make_handler(
         if loopback_bound:
             default_port = 443 if parsed_origin.scheme == "https" else 80
             origin_port = parsed_origin.port or default_port
-            if (parsed_origin.hostname or "").lower() not in LOOPBACK_HOSTS or origin_port != bind_port:
+            if (
+                parsed_origin.hostname or ""
+            ).lower() not in LOOPBACK_HOSTS or origin_port != bind_port:
                 return False
         return True
 
@@ -288,13 +489,17 @@ def make_handler(
 
             if path == "/api/status":
                 refresh = urllib.parse.parse_qs(parsed.query).get("refresh") == ["1"]
-                self._send_json(HTTPStatus.OK, status_cache.get(force=refresh), head_only=head_only)
+                self._send_json(
+                    HTTPStatus.OK, status_cache.get(force=refresh), head_only=head_only
+                )
                 return
 
             rel = urllib.parse.unquote(path).lstrip("/")
             candidate = os.path.realpath(os.path.join(real_root, rel or "index.html"))
             if candidate != real_root and not candidate.startswith(real_root + os.sep):
-                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"}, head_only=head_only)
+                self._send_json(
+                    HTTPStatus.FORBIDDEN, {"error": "forbidden"}, head_only=head_only
+                )
                 return
 
             if os.path.isdir(candidate):
@@ -310,12 +515,18 @@ def make_handler(
                             candidate = fb
                             break
                 if not os.path.isfile(candidate):
-                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"}, head_only=head_only)
+                    self._send_json(
+                        HTTPStatus.NOT_FOUND,
+                        {"error": "not found"},
+                        head_only=head_only,
+                    )
                     return
 
             ctype, _ = mimetypes.guess_type(candidate)
             ctype = ctype or "application/octet-stream"
-            if ctype.startswith(("text/", "application/javascript", "application/json", "image/svg+xml")):
+            if ctype.startswith(
+                ("text/", "application/javascript", "application/json", "image/svg+xml")
+            ):
                 ctype = f"{ctype}; charset=utf-8"
 
             cache_ctl = (
@@ -327,7 +538,11 @@ def make_handler(
                 with open(candidate, "rb") as f:
                     body = f.read()
             except OSError:
-                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "read error"}, head_only=head_only)
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": "read error"},
+                    head_only=head_only,
+                )
                 return
 
             self.send_response(HTTPStatus.OK)
@@ -356,29 +571,48 @@ def make_handler(
                 )
                 return
 
-            ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            ctype = (
+                (self.headers.get("Content-Type") or "")
+                .split(";", 1)[0]
+                .strip()
+                .lower()
+            )
             if ctype != "application/json":
-                self._send_json(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "Content-Type must be application/json"})
+                self._send_json(
+                    HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+                    {"error": "Content-Type must be application/json"},
+                )
                 return
 
             sec_site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
             if sec_site and sec_site not in ("same-origin", "none"):
-                self._send_json(HTTPStatus.FORBIDDEN, {"error": "Cross-origin chat request rejected"})
+                self._send_json(
+                    HTTPStatus.FORBIDDEN,
+                    {"error": "Cross-origin chat request rejected"},
+                )
                 return
 
             origin = (self.headers.get("Origin") or "").strip()
             if origin and not _origin_allowed(origin, self.headers.get("Host") or ""):
-                self._send_json(HTTPStatus.FORBIDDEN, {"error": "Cross-origin chat request rejected"})
+                self._send_json(
+                    HTTPStatus.FORBIDDEN,
+                    {"error": "Cross-origin chat request rejected"},
+                )
                 return
 
             try:
                 length = int(self.headers.get("Content-Length") or "0")
             except ValueError:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid Content-Length"})
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST, {"error": "invalid Content-Length"}
+                )
                 return
 
             if length <= 0 or length > MAX_CHAT_BODY_BYTES:
-                self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "request body out of bounds"})
+                self._send_json(
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                    {"error": "request body out of bounds"},
+                )
                 return
 
             try:
@@ -388,12 +622,17 @@ def make_handler(
                 return
 
             if not isinstance(payload, dict):
-                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "JSON object required"})
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST, {"error": "JSON object required"}
+                )
                 return
 
             raw_msgs = payload.get("messages")
             if not isinstance(raw_msgs, list) or not raw_msgs:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "non-empty messages list required"})
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "non-empty messages list required"},
+                )
                 return
 
             clean_msgs = []
@@ -402,11 +641,17 @@ def make_handler(
                     continue
                 role = m.get("role")
                 content = m.get("content")
-                if role in ("system", "user", "assistant") and isinstance(content, str) and content.strip():
+                if (
+                    role in ("system", "user", "assistant")
+                    and isinstance(content, str)
+                    and content.strip()
+                ):
                     clean_msgs.append({"role": role, "content": content[:32_768]})
 
             if not clean_msgs:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "no valid chat messages"})
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST, {"error": "no valid chat messages"}
+                )
                 return
 
             status = status_cache.get()
@@ -415,7 +660,9 @@ def make_handler(
                 req_backend = (
                     status["activeBackend"]
                     if status["activeBackend"] in ("mesh", "ollama")
-                    else ("ollama" if status["configuredBackend"] == "ollama" else "mesh")
+                    else (
+                        "ollama" if status["configuredBackend"] == "ollama" else "mesh"
+                    )
                 )
 
             model = payload.get("model")
@@ -433,7 +680,9 @@ def make_handler(
             except (OSError, ValueError, http.client.HTTPException) as exc:
                 self._send_json(
                     HTTPStatus.SERVICE_UNAVAILABLE,
-                    {"error": f"Local {req_backend} backend is unreachable ({exc}). Start it with 'cadre serve'."},
+                    {
+                        "error": f"Local {req_backend} backend is unreachable ({exc}). Start it with 'cadre serve'."
+                    },
                 )
                 return
 
@@ -445,7 +694,11 @@ def make_handler(
                 return
 
             choices = resp_payload.get("choices")
-            first_msg = choices[0].get("message", {}) if isinstance(choices, list) and choices else {}
+            first_msg = (
+                choices[0].get("message", {})
+                if isinstance(choices, list) and choices
+                else {}
+            )
             reply = str(first_msg.get("content") or "").strip()
             used_model = str(resp_payload.get("model") or model)
             latency_ms = max(1, round((time.monotonic() - started) * 1000))
@@ -463,12 +716,19 @@ def make_handler(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Cadre Web static SPA and local telemetry server")
+    parser = argparse.ArgumentParser(
+        description="Cadre Web static SPA and local telemetry server"
+    )
     parser.add_argument("--host", default=os.environ.get("CADRE_WEB_HOST", "127.0.0.1"))
-    parser.add_argument("--port", type=int, default=int(os.environ.get("CADRE_WEB_PORT", "8384")))
+    parser.add_argument(
+        "--port", type=int, default=int(os.environ.get("CADRE_WEB_PORT", "8384"))
+    )
     parser.add_argument("--static-dir", required=True)
     parser.add_argument("--backend", choices=("auto", "mesh", "ollama"), default="auto")
     parser.add_argument("--default-model", default="")
+    parser.add_argument(
+        "--agents-file", default=os.environ.get("CADRE_AGENTS_FILE", "")
+    )
     parser.add_argument("--mesh-url", default="http://127.0.0.1:9337")
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     parser.add_argument("--enable-chat-proxy", action="store_true")
@@ -495,6 +755,7 @@ def main() -> int:
         mesh_ep=mesh_ep,
         ollama_ep=ollama_ep,
         chat_enabled=chat_enabled,
+        agents_file=args.agents_file,
     )
     handler = make_handler(
         args.static_dir,
