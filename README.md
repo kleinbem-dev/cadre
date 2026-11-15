@@ -10,8 +10,8 @@
 
 ---
 
-**`cadre`** brings private, autonomous AI teammates directly onto your machines and into your team channels. 
-Powered by [Goose](https://github.com/aaif-goose/goose) over ACP, and backed by your choice of local compute—whether a single [Ollama](https://ollama.ai) instance on your laptop or a distributed [MeshLLM](https://github.com/Mesh-LLM/mesh-llm) cluster split across your GPU boxes.
+**`cadre`** brings private, autonomous AI teammates directly onto your machines and into your team channels.
+Powered by [Goose](https://github.com/aaif-goose/goose) and Agent Client Protocol (ACP) adapters (`goose`, `buzz-agent`, `pi-acp`, `amp-acp`), and backed by your choice of local compute—whether a single [Ollama](https://ollama.ai) instance on your laptop or a distributed [MeshLLM](https://github.com/Mesh-LLM/mesh-llm) cluster split across your GPU boxes.
 
 No cloud API keys required. No telemetry. Inference runs entirely on your hardware (Buzz agents talk only to your configured relays and whatever network resources their tools access).
 
@@ -23,8 +23,8 @@ nix run github:kleinbem-dev/cadre
 
 ## What It Does
 
-1. **In Team Chat:** An autonomous member of your [Buzz](https://github.com/block/buzz) relays (via ACP agent harnesses). Team members `@cadre` in channels to debug code, explain regressions, or run commands (defaults to owner-only authorization; configure `respondTo` for team allowlists or open channels).
-2. **In Your Terminal:** An interactive pairing assistant (`cadre` / `goose`) that plans, runs shell commands, navigates code, and edits files.
+1. **In Team Chat:** Autonomous members of your [Buzz](https://github.com/block/buzz) relays via `buzz-acp`. Team members `@mention` agents in channels or threads to debug code, audit diffs, or run commands (defaults to owner-only authorization; configure `respondTo` for team allowlists or open channels).
+2. **In Your Terminal & Editor:** Interactive pairing sessions (`cadre`, `cadre --agent @reviewer`), local multi-pass LLM code review (`cadre review`), cross-agent instruction sync (`cadre rules`), and readiness diagnostics (`cadre doctor`).
 3. **Flexible Compute:** Switch between **Ollama** or **MeshLLM** with a single flag. If you have multiple devices, MeshLLM splits models too large for one machine across your fleet.
 
 ---
@@ -34,13 +34,13 @@ nix run github:kleinbem-dev/cadre
 ```text
                ┌────────────────────────────────────────────────────────────────────────────────────────┐
                │                                        SURFACES                                        │
-               │  Terminal (cadre)  │  Web Dashboard (cadre web)  │  Desktop (cadre gui)  │  Chat (cadre)│
+               │  Terminal (cadre)  │  Web Dashboard (cadre web)  │  Desktop (cadre gui)  │  Chat (buzz) │
                └───────────────────────────────────────────┬────────────────────────────────────────────┘
-                                   │  ACP (Agent Client Protocol)
+                                   │  ACP (goose · buzz-agent · pi-acp · amp-acp)
                                    ▼
                ┌────────────────────────────────────────────────────────┐
                │                        CADRE                           │
-               │     Autonomous Agent Engine (aaif-goose + ACP)         │
+               │     Declarative Teammates, Builder Toolkit & MCP       │
                └───────────────────┬────────────────────────────────────┘
                                    │  OpenAI-Compatible Local API
                                    ▼
@@ -61,13 +61,22 @@ nix run github:kleinbem-dev/cadre
 
 ### 1. Run Directly with Nix
 
-The `gui` and `chat` commands need `berd` and `buzz-app` (or `buzz-cli`) on `PATH`. The `cadre` package does not include heavy desktop applications by default. Make them available in your environment or install them via `services.cadre.desktop.enable`.
+The `gui`, `chat`, `review`, and `rules` commands dispatch to `berd`, `buzz-app` (or `buzz`), `block-review` (`review`), and `ai-rules` on `PATH`. Enable `services.cadre.desktop.enable` and `services.cadre.tools.enable` to install them declaratively.
 
 ```bash
 # Terminal pairing assistant (Goose in CLI):
 nix run github:kleinbem-dev/cadre
 
-# Web Dashboard (SvelteKit + local inference telemetry & chat):
+# Check local inference, ACP harnesses, toolkit, and MCP extension readiness:
+nix run github:kleinbem-dev/cadre -- doctor
+
+# Pair with a specific declarative teammate:
+cadre --agent @reviewer
+
+# Run local LLM code review over git changes (via block/review):
+cadre review -- -base main
+
+# Web Dashboard (SvelteKit + local inference telemetry, MCP readiness & chat):
 nix run github:kleinbem-dev/cadre -- web
 
 # Desktop GUI (Berd window on your local backend):
@@ -75,22 +84,13 @@ nix run github:kleinbem-dev/cadre -- gui
 
 # Team Chat (Buzz client):
 nix run github:kleinbem-dev/cadre -- chat
-
-# Print CLI version:
-nix run github:kleinbem-dev/cadre -- --version
-
-# Explicitly use Ollama backend:
-nix run github:kleinbem-dev/cadre -- --backend ollama --model qwen2.5-coder
-
-# Explicitly use MeshLLM backend:
-nix run github:kleinbem-dev/cadre -- --backend mesh --model Qwen3-8B-Q4_K_M
 ```
 
 ---
 
 ## Fleet Setup (NixOS)
 
-Run `cadre` as a system service on your machines:
+Run `cadre` as a system service on your machines (and optionally self-host a Buzz relay via `cadre.nixosModules.buzz-relay`):
 
 ```nix
 {
@@ -104,10 +104,20 @@ Run `cadre` as a system service on your machines:
           services.cadre = {
             enable = true;
             autoStart = true; # or false on workstations so idle memory doesn't starve builds
+            tools.enable = true; # installs block-review, ai-rules, braindump, buzz-cli
             desktop.enable = true; # installs Berd GUI and Buzz chat alongside CLI
             backend = "mesh"; # or "ollama"
             models = [ "Qwen3-14B-Q4_K_M" ];
             # package = pkgs.mesh-llm-cuda;  # NVIDIA acceleration
+
+            # Define reusable AI teammates for CLI (`cadre --agent @reviewer`) and Web:
+            agents.reviewer = {
+              name = "Cadre Reviewer";
+              role = "Code Reviewer & Security Auditor";
+              harness = "pi-acp"; # goose | buzz-agent | pi-acp | amp-acp
+              systemPrompt = "Audit diffs for correctness, security invariants, and simplicity.";
+              tools = [ "git" "review" ];
+            };
 
             # Host the Cadre web dashboard daemon:
             web = {
@@ -120,6 +130,9 @@ Run `cadre` as a system service on your machines:
             buzz.agents.dev = {
               relayUrl = "wss://buzz.example.com";
               privateKeyFile = "/run/secrets/buzz-cadre-key";
+              harness = "goose"; # goose | buzz-agent | pi-acp | amp-acp
+              # environmentFile = "/run/secrets/buzz-amp.env"; # required (AMP_API_KEY) when harness = "amp-acp"
+              sessionPolicy = "thread"; # channel | thread
               respondTo = "owner-only"; # or "allowlist", "anyone"
               owner = "hex-pubkey-here";
             };
@@ -145,9 +158,15 @@ Run `cadre` as a user service without needing NixOS:
 
   services.cadre = {
     enable = true;
+    tools.enable = true;
     desktop.enable = true; # adds Cadre (Berd) and Cadre (Buzz) menu entries on Linux
     backend = "mesh";
     models = [ "Qwen3-8B-Q4_K_M" ];
+    agents.reviewer = {
+      name = "Cadre Reviewer";
+      role = "Code Reviewer";
+      tools = [ "git" "review" ];
+    };
   };
 }
 ```
@@ -156,16 +175,17 @@ Run `cadre` as a user service without needing NixOS:
 
 ## Ecosystem Packages
 
-`cadre` packages the self-hosted AI agent stack for Nix:
+`cadre` packages and dogfoods the self-hosted AI agent stack for Nix:
 
 | Package | Purpose |
 | :--- | :--- |
-| **`cadre`** / **`cadre-ai`** | The unified launcher, local telemetry server, and agent harness |
-| **`cadre-web`** | The static web surface and telemetry cockpit for Cadre |
-| **`goose-cli`** | The core autonomous agent runtime ([aaif-goose](https://github.com/aaif-goose/goose)) |
-| **`mesh-llm`**, **`skippy`** | Distributed LLM inference over peer-to-peer mesh |
-| **`buzz-app`**, **`buzz-cli`**, **`buzz-relay`**, **`buzz-acp`** | Self-hosted Nostr team chat where agents are full participants |
-| **`berd`**, **`braindump`** | Native desktop UI and knowledge tools |
+| **`cadre`** / **`cadre-ai`** | Unified launcher, readiness doctor, and local telemetry server |
+| **`cadre-web`** | Static Svelte 5 web cockpit and local telemetry UI |
+| **`goose-cli`**, **`buzz-agent`**, **`pi-acp`**, **`amp-acp`** | Supported Agent Client Protocol (ACP) harnesses (`amp-acp` via overlay, unfree) |
+| **`mesh-llm`** (`mesh-llm-cuda`, `mesh-llm-rocm`) | Distributed LLM inference over peer-to-peer mesh |
+| **`buzz-app`**, **`buzz-cli`**, **`buzz-relay`**, **`buzz-acp`** | Self-hosted Nostr team chat, relay (`nixosModules.buzz-relay`), and ACP bridge |
+| **`berd`** | Native desktop workspace for local Goose agents |
+| **`block-review`**, **`ai-rules`**, **`braindump`** | Local git diff reviewer (`review`), cross-agent rule manager, and session exporter |
 
 ---
 

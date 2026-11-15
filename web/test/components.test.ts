@@ -28,11 +28,12 @@ describe('Header component & WAI-ARIA tabs', () => {
 });
 
 describe('AgentCard component', () => {
-	it('renders MeshLLM and Ollama badges, tools, and status states', () => {
+	it('renders MeshLLM and Ollama badges, ACP harness labels, tools, and status states', () => {
 		const meshHtml = render(AgentCard, {
 			props: { agent: INITIAL_TEAMMATES[0], onSelect: () => {} }
 		}).body;
 		assert.match(meshHtml, /@cadre/);
+		assert.match(meshHtml, /goose/);
 		assert.match(meshHtml, /MeshLLM cluster/);
 		assert.match(meshHtml, /Start Pairing Session/);
 
@@ -43,6 +44,7 @@ describe('AgentCard component', () => {
 		const ollamaHtml = render(AgentCard, {
 			props: { agent: busyOllama }
 		}).body;
+		assert.match(ollamaHtml, /pi-acp/);
 		assert.match(ollamaHtml, /Ollama local/);
 		assert.match(ollamaHtml, /busy/);
 		assert.doesNotMatch(ollamaHtml, /Start Pairing Session/);
@@ -73,11 +75,21 @@ describe('ComputeTelemetry component', () => {
 			}
 		];
 		const liveHtml = render(ComputeTelemetry, {
-			props: { nodes: liveNodes, isReference: false }
+			props: {
+				nodes: liveNodes,
+				isReference: false,
+				harnesses: [
+					{ id: 'goose', available: true },
+					{ id: 'amp-acp', available: false }
+				],
+				extensions: [{ id: 'buzz', name: 'Buzz MCP', type: 'stdio', enabled: true }]
+			}
 		}).body;
 		assert.match(liveHtml, /Local Zero-Egress Compute/);
 		assert.match(liveHtml, /host-managed/);
 		assert.match(liveHtml, /Qwen3-Local/);
+		assert.match(liveHtml, /ACP Harnesses \(1\/2 ready\)/);
+		assert.match(liveHtml, /Buzz MCP/);
 		assert.doesNotMatch(liveHtml, /NaN/);
 
 		const empty = render(ComputeTelemetry, {

@@ -1,9 +1,8 @@
-# services.cadre.buzz: goose agents as members of a Buzz team chat.
+# services.cadre.buzz: ACP agents as members of a Buzz team chat.
 #
-# Each agent is a buzz-acp harness on the relay: it listens for @mentions,
-# prompts goose over ACP, and goose answers in the channel. goose runs on
-# the local inference node (services.cadre: MeshLLM or Ollama), so the whole
-# conversation stays on your machines.
+# Each agent is a buzz-acp bridge on the relay: it listens for @mentions,
+# prompts the configured ACP harness (goose, buzz-agent, pi-acp, or amp-acp),
+# and posts replies in the channel while inference stays on local compute.
 #
 # An agent needs its own Nostr key, registered as a member of the relay:
 #   buzz-admin generate-key   → the secret key into `privateKeyFile`
@@ -17,10 +16,20 @@
 
 let
   cfg = config.services.cadre;
+  agentsLib = import ../shared/agents.nix { inherit lib; };
 
-  # goose's provider for the local inference backend (MeshLLM or Ollama).
   baseUrl =
     if cfg.backend == "ollama" then "http://127.0.0.1:11434/v1" else "http://127.0.0.1:9337/v1";
+
+  harnessPkgFor =
+    h:
+    {
+      goose = pkgs.goose-cli;
+      buzz-agent = pkgs.buzz-agent or null;
+      pi-acp = pkgs.pi-acp or null;
+      amp-acp = pkgs.amp-acp or null;
+    }
+    .${h};
 
   agentProvider =
     agent:
@@ -46,6 +55,30 @@ let
       };
     };
 
+  piModelsConfig =
+    agent:
+    (pkgs.formats.json { }).generate "pi-models.json" {
+      providers.cadre = {
+        inherit baseUrl;
+        api = "openai-completions";
+        apiKey = "cadre-local";
+        models = [
+          { id = agent.model; }
+        ]
+        ++ lib.optional (agent.model != "cadre") {
+          id = "cadre";
+        };
+      };
+    };
+
+  piSettingsConfig =
+    agent:
+    (pkgs.formats.json { }).generate "pi-settings.json" {
+      defaultProvider = "cadre";
+      defaultModel = agent.model;
+      quietStartup = true;
+    };
+
   agentModule = {
     options = {
       relayUrl = lib.mkOption {
@@ -60,8 +93,27 @@ let
         description = ''
           File with the agent's Nostr secret key (`nsec1…` or hex). This MUST be a
           dedicated, throwaway identity for this bot, never your personal Nostr key.
-          Because Goose runs with `GOOSE_MODE = "auto"` inside the service sandbox,
+          Because the ACP agent runs autonomously inside the service sandbox,
           tools executed by the agent share its user environment and could read the key.
+        '';
+      };
+
+      environmentFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.externalPath;
+        default = null;
+        example = "/run/secrets/buzz-amp.env";
+        description = ''
+          Optional systemd `EnvironmentFile` supplying harness credentials
+          (required with `AMP_API_KEY` when `harness = "amp-acp"`).
+        '';
+      };
+
+      harness = lib.mkOption {
+        type = lib.types.enum agentsLib.harnesses;
+        default = "goose";
+        description = ''
+          ACP agent binary spawned by `buzz-acp`: `goose` (`goose acp`),
+          `buzz-agent`, `pi-acp`, or `amp-acp`.
         '';
       };
 
@@ -70,7 +122,7 @@ let
         default = if cfg.backend == "ollama" then "qwen2.5-coder" else "cadre";
         defaultText = lib.literalExpression ''if config.services.cadre.backend == "ollama" then "qwen2.5-coder" else "cadre"'';
         description = ''
-          Model for goose: with MeshLLM, "cadre" lets the backend pick;
+          Model requested for ACP turns: with MeshLLM, "cadre" lets the backend pick;
           with Ollama, must match a model served by Ollama (defaults to "qwen2.5-coder").
         '';
       };
@@ -79,6 +131,24 @@ let
         type = lib.types.ints.positive;
         default = 32768;
         description = "Context limit in tokens exposed to Goose for compaction planning.";
+      };
+
+      systemPrompt = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Optional persona system prompt injected via `BUZZ_ACP_SYSTEM_PROMPT_FILE`.";
+      };
+
+      sessionPolicy = lib.mkOption {
+        type = lib.types.enum [
+          "channel"
+          "thread"
+        ];
+        default = "channel";
+        description = ''
+          ACP session scoping in channels (`channel` shares one session per channel;
+          `thread` isolates each canonical channel thread).
+        '';
       };
 
       owner = lib.mkOption {
@@ -117,8 +187,12 @@ let
 
   agentService =
     name: agent:
+    let
+      harnessPkg = harnessPkgFor agent.harness;
+      promptFile = pkgs.writeText "cadre-buzz-${name}-prompt.md" (agent.systemPrompt or "");
+    in
     lib.nameValuePair "cadre-buzz-${name}" {
-      description = "Cadre agent ${name} (goose in Buzz via ${cfg.backend})";
+      description = "Cadre agent ${name} (${agent.harness} in Buzz via ${cfg.backend})";
       wantedBy = [ "multi-user.target" ];
       wants = [ "network-online.target" ];
       after = [
@@ -126,8 +200,7 @@ let
       ]
       ++ lib.optional (cfg.backend == "mesh") "mesh-llm.service"
       ++ lib.optional (cfg.backend == "ollama") "ollama.service";
-      path = [
-        pkgs.goose-cli
+      path = lib.optional (harnessPkg != null) harnessPkg ++ [
         pkgs.buzz-cli
         pkgs.git
         pkgs.coreutils
@@ -135,12 +208,29 @@ let
       environment = {
         HOME = "/var/lib/cadre-buzz-${name}";
         BUZZ_RELAY_URL = agent.relayUrl;
+        BUZZ_ACP_AGENT_COMMAND = agent.harness;
+        # Non-goose ACP adapters read NDJSON directly on stdio without an `acp` subcommand.
+        BUZZ_ACP_AGENT_ARGS = if agent.harness == "goose" then "acp" else "";
+        BUZZ_ACP_MODEL = if agent.harness == "pi-acp" then "cadre/${agent.model}" else agent.model;
+        BUZZ_ACP_SESSION_POLICY = agent.sessionPolicy;
         BUZZ_ACP_RESPOND_TO = agent.respondTo;
+        GOOSE_TELEMETRY_OFF = "1";
+      }
+      // lib.optionalAttrs (agent.harness == "goose") {
         GOOSE_PROVIDER = "cadre";
         GOOSE_MODEL = agent.model;
         # No human approves tool calls in a chat; the unit is the sandbox.
         GOOSE_MODE = "auto";
-        GOOSE_TELEMETRY_OFF = "1";
+      }
+      // lib.optionalAttrs (agent.harness == "buzz-agent") {
+        BUZZ_AGENT_PROVIDER = "openai";
+        OPENAI_COMPAT_BASE_URL = baseUrl;
+        OPENAI_COMPAT_API = "chat";
+        OPENAI_COMPAT_API_KEY = "cadre-local";
+        BUZZ_AGENT_MODEL = agent.model;
+      }
+      // lib.optionalAttrs (agent.systemPrompt != null) {
+        BUZZ_ACP_SYSTEM_PROMPT_FILE = "${promptFile}";
       }
       // lib.optionalAttrs (agent.owner != null) {
         BUZZ_ACP_AGENT_OWNER = agent.owner;
@@ -149,7 +239,13 @@ let
         BUZZ_ACP_RESPOND_TO_ALLOWLIST = lib.concatStringsSep "," agent.allowlist;
       };
       script = ''
-        install -D -m 0644 ${agentProvider agent} "$HOME/.config/goose/custom_providers/cadre.json"
+        ${lib.optionalString (agent.harness == "goose") ''
+          install -D -m 0644 ${agentProvider agent} "$HOME/.config/goose/custom_providers/cadre.json"
+        ''}
+        ${lib.optionalString (agent.harness == "pi-acp") ''
+          install -D -m 0644 ${piModelsConfig agent} "$HOME/.pi/agent/models.json"
+          install -D -m 0644 ${piSettingsConfig agent} "$HOME/.pi/agent/settings.json"
+        ''}
         BUZZ_PRIVATE_KEY=$(< "$CREDENTIALS_DIRECTORY/key")
         export BUZZ_PRIVATE_KEY
         unset CREDENTIALS_DIRECTORY
@@ -191,6 +287,9 @@ let
           "~@privileged"
         ];
         UMask = "0077";
+      }
+      // lib.optionalAttrs (agent.environmentFile != null) {
+        EnvironmentFile = agent.environmentFile;
       };
     };
 in
@@ -203,20 +302,30 @@ in
         helper = {
           relayUrl = "wss://buzz.example.com";
           privateKeyFile = "/run/secrets/buzz-helper-key";
+          harness = "goose";
         };
       }
     '';
     description = ''
-      goose agents as members of a Buzz relay, one buzz-acp harness each, all
+      ACP agents as members of a Buzz relay, one buzz-acp harness each, all
       backed by this node's local inference (MeshLLM or Ollama).
     '';
   };
 
   config = lib.mkIf (cfg.enable && cfg.buzz.agents != { }) {
-    assertions = lib.mapAttrsToList (name: _: {
-      assertion = builtins.match "^[a-zA-Z0-9_-]+$" name != null;
-      message = "services.cadre.buzz.agents name '${name}' must match ^[a-zA-Z0-9_-]+$";
-    }) cfg.buzz.agents;
+    assertions =
+      (lib.mapAttrsToList (name: _: {
+        assertion = builtins.match "^[a-zA-Z0-9_-]+$" name != null;
+        message = "services.cadre.buzz.agents name '${name}' must match ^[a-zA-Z0-9_-]+$";
+      }) cfg.buzz.agents)
+      ++ (lib.mapAttrsToList (name: agent: {
+        assertion = harnessPkgFor agent.harness != null;
+        message = "services.cadre.buzz.agents.${name}: harness package '${agent.harness}' is unavailable (for unfree harnesses such as 'amp-acp', enable allowUnfree).";
+      }) cfg.buzz.agents)
+      ++ (lib.mapAttrsToList (name: agent: {
+        assertion = agent.harness != "amp-acp" || agent.environmentFile != null;
+        message = "services.cadre.buzz.agents.${name}: harness = \"amp-acp\" requires environmentFile (with AMP_API_KEY) because amp-acp authenticates against Amp rather than the local inference endpoint.";
+      }) cfg.buzz.agents);
 
     warnings = lib.concatLists (
       lib.mapAttrsToList (

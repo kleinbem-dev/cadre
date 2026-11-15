@@ -28,9 +28,9 @@
 					{#each cadre.teammates as t (t.id)}
 						<button
 							type="button"
-							aria-pressed={cadre.selectedAgentId === t.id}
+							aria-pressed={cadre.activeAgent.id === t.id}
 							onclick={() => cadre.selectAgent(t.id)}
-							class="px-2.5 py-1 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 {cadre.selectedAgentId === t.id
+							class="px-2.5 py-1 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 {cadre.activeAgent.id === t.id
 								? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-bold shadow-2xs'
 								: 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'}"
 						>
@@ -105,7 +105,12 @@
 				</button>
 			</div>
 
-			<ComputeTelemetry nodes={cadre.nodes} isReference={cadre.isReferenceNodes} />
+			<ComputeTelemetry
+				nodes={cadre.nodes}
+				isReference={cadre.isReferenceNodes}
+				harnesses={cadre.harnesses}
+				extensions={cadre.extensions}
+			/>
 		</div>
 	{/if}
 </div>

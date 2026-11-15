@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cadre: private AI teammates on your own compute (Goose over local inference).
+# cadre: private AI teammates on your own compute (Goose & ACP over local inference).
 set -euo pipefail
 
 VERSION="@version@"
@@ -18,14 +18,19 @@ Commands:
   web                open Cadre web dashboard in your browser
   gui, desktop, berd start Berd desktop app on the local backend
   chat, buzz         open Buzz team chat application
+  review             run local LLM code review (block-review) over git changes
+  rules              manage cross-agent instructions and skills (ai-rules)
+  agents             list declarative AI teammates configured on this host
+  doctor, status     check local inference, ACP harnesses, tools, and MCP readiness
   serve              run the local inference node without opening a client
 
 Options:
+  --agent ID         select a declarative teammate by id or @handle (session)
   --backend BACKEND  inference engine: auto | mesh | ollama (default: $CADRE_BACKEND or auto)
   --model MODEL      model to serve/use (default: $CADRE_MODEL or Qwen3-8B-Q4_K_M / qwen2.5-coder)
   --port PORT        API port to connect to (default: 9337 for mesh, 11434 for ollama)
   --join-file PATH   join your private mesh with the invite token in PATH (mesh backend only)
-  --app APP          alternate command selector: session | web | gui | chat | serve
+  --app APP          alternate command selector: session | web | gui | chat | review | rules | agents | doctor | serve
   -V, --version      print version and exit
   -h, --help         show this help
 EOF
@@ -46,6 +51,10 @@ parse_subcommand() {
     web) echo "web" ;;
     gui | desktop | berd) echo "gui" ;;
     chat | buzz) echo "chat" ;;
+    review) echo "review" ;;
+    rules) echo "rules" ;;
+    agents) echo "agents" ;;
+    doctor | status) echo "doctor" ;;
     serve) echo "serve" ;;
     *) return 1 ;;
   esac
@@ -58,8 +67,36 @@ require_arg() {
   }
 }
 
+resolve_agents_file() {
+  local xdg_cfg="${XDG_CONFIG_HOME:-$HOME/.config}"
+  local candidate
+  for candidate in "${CADRE_AGENTS_FILE:-}" "$xdg_cfg/cadre/agents.json" "/etc/cadre/agents.json"; do
+    if [ -n "$candidate" ] && [ -f "$candidate" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+resolve_server_py() {
+  local script_dir
+  script_dir="$(dirname "$(readlink -f "$0")")"
+  local server_py="$DEFAULT_SERVER_PY"
+  if [[ "$server_py" == "@serverPy@" ]] || [ ! -f "$server_py" ]; then
+    if [ -f "$(dirname "$script_dir")/libexec/cadre/server.py" ]; then
+      server_py="$(dirname "$script_dir")/libexec/cadre/server.py"
+    elif [ -f "$script_dir/server.py" ]; then
+      server_py="$script_dir/server.py"
+    fi
+  fi
+  [ -f "$server_py" ] && echo "$server_py"
+}
+
 subcommand=""
+agent_id=""
 backend=${CADRE_BACKEND:-auto}
+backend_explicit=0
 model=${CADRE_MODEL:-}
 model_explicit=${model:+1}
 join_file=""
@@ -84,9 +121,15 @@ while [ $# -gt 0 ]; do
       }
       shift 2
       ;;
+    --agent | --as)
+      require_arg $#
+      agent_id="$2"
+      shift 2
+      ;;
     --backend)
       require_arg $#
       backend="$2"
+      backend_explicit=1
       shift 2
       ;;
     --model)
@@ -147,6 +190,54 @@ fi
 # Zero telemetry leaves the machine by default.
 export GOOSE_TELEMETRY_OFF=${GOOSE_TELEMETRY_OFF:-1}
 
+agent_system_prompt=""
+if [ -n "$agent_id" ]; then
+  agents_file=$(resolve_agents_file || true)
+  if [ -z "$agents_file" ]; then
+    echo "No declarative teammates configured (looked in \$CADRE_AGENTS_FILE, ~/.config/cadre/agents.json, /etc/cadre/agents.json)." >&2
+    exit 1
+  fi
+  lookup_norm="${agent_id#@}"
+  matched_json=$(jq -c --arg q "$agent_id" --arg qn "$lookup_norm" '
+    map(select(.id == $q or .id == $qn or .handle == $q or .handle == ("@" + $qn))) | first // empty
+  ' "$agents_file")
+  if [ -z "$matched_json" ]; then
+    echo "Unknown teammate '$agent_id'. Run 'cadre agents' to list configured teammates." >&2
+    exit 1
+  fi
+  if [ "$backend_explicit" -eq 0 ]; then
+    agent_backend=$(jq -r '.backend // empty' <<<"$matched_json")
+    [ -n "$agent_backend" ] && backend="$agent_backend"
+  fi
+  if [ -z "$model_explicit" ]; then
+    agent_model=$(jq -r '.model // empty' <<<"$matched_json")
+    if [ -n "$agent_model" ]; then
+      model="$agent_model"
+      model_explicit=1
+    fi
+  fi
+  agent_system_prompt=$(jq -r '.systemPrompt // empty' <<<"$matched_json")
+fi
+
+if [ "$subcommand" = "agents" ]; then
+  agents_file=$(resolve_agents_file || true)
+  if [ -z "$agents_file" ]; then
+    echo "No declarative teammates configured on this host."
+    echo "Declare teammates under 'services.cadre.agents' in NixOS or Home Manager."
+    exit 0
+  fi
+  jq -r '.[] | "\(.handle)\t\(.name)\t[\(.harness // "goose") · \(.backend // "mesh") · \(if (.model // "") != "" then .model else "auto" end)]\t\(.role)"' "$agents_file"
+  exit 0
+fi
+
+if [ "$subcommand" = "rules" ]; then
+  if ! command -v ai-rules >/dev/null 2>&1; then
+    echo "ai-rules is not installed; install 'ai-rules' or enable 'services.cadre.tools.enable'." >&2
+    exit 1
+  fi
+  exec ai-rules "${extra_args[@]}"
+fi
+
 if [ "$subcommand" = "chat" ]; then
   for client in buzz-app buzz buzz-cli; do
     if command -v "$client" >/dev/null 2>&1; then
@@ -159,6 +250,11 @@ fi
 
 if [ "$subcommand" = "gui" ] && ! command -v berd >/dev/null 2>&1; then
   echo "Berd is not installed; install 'berd' or enable 'services.cadre.desktop.enable'." >&2
+  exit 1
+fi
+
+if [ "$subcommand" = "review" ] && ! command -v review >/dev/null 2>&1; then
+  echo "block-review is not installed; install 'block-review' or enable 'services.cadre.tools.enable'." >&2
   exit 1
 fi
 
@@ -206,6 +302,71 @@ probe_models() {
     jq -r '.data[]?.id // empty' <<<"$raw" 2>/dev/null || true
   fi
 }
+
+if [ "$subcommand" = "doctor" ]; then
+  mesh_check_port=${port:-9337}
+  ollama_check_port=${port:-11434}
+  echo "cadre $VERSION ◈ local readiness"
+  echo ""
+  echo "Inference:"
+  if backend_alive mesh "$mesh_check_port"; then
+    mesh_first=$(probe_models mesh "$mesh_check_port" | head -n1)
+    echo "  mesh-llm   [ready]   http://127.0.0.1:$mesh_check_port/v1 (${mesh_first:-no models loaded})"
+  elif command -v mesh-llm >/dev/null 2>&1; then
+    echo "  mesh-llm   [standby] installed ($(command -v mesh-llm))"
+  else
+    echo "  mesh-llm   [missing] not in PATH"
+  fi
+  if backend_alive ollama "$ollama_check_port"; then
+    ollama_first=$(probe_models ollama "$ollama_check_port" | head -n1)
+    echo "  ollama     [ready]   http://127.0.0.1:$ollama_check_port/v1 (${ollama_first:-no models loaded})"
+  elif command -v ollama >/dev/null 2>&1; then
+    echo "  ollama     [standby] installed ($(command -v ollama))"
+  else
+    echo "  ollama     [missing] not in PATH"
+  fi
+
+  echo ""
+  echo "ACP Harnesses:"
+  for h in goose buzz-agent pi-acp amp-acp; do
+    if command -v "$h" >/dev/null 2>&1; then
+      printf '  %-10s [ready]   %s\n' "$h" "$(command -v "$h")"
+    else
+      printf '  %-10s [missing]\n' "$h"
+    fi
+  done
+
+  echo ""
+  echo "Builder Toolkit:"
+  for tool in review ai-rules braindump berd buzz-app buzz; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      printf '  %-10s [ready]   %s\n' "$tool" "$(command -v "$tool")"
+    else
+      printf '  %-10s [missing]\n' "$tool"
+    fi
+  done
+
+  server_py=$(resolve_server_py || true)
+  goose_cfg="${XDG_CONFIG_HOME:-$HOME/.config}/goose/config.yaml"
+  if [ -n "$server_py" ] && [ -f "$goose_cfg" ]; then
+    echo ""
+    echo "Goose MCP Extensions ($goose_cfg):"
+    python3 - "$server_py" "$goose_cfg" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("cadre_server", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+exts = mod.scan_goose_extensions(sys.argv[2])
+if not exts:
+    print("  (none configured)")
+else:
+    for ext in exts:
+        state = "ready" if ext.get("enabled", True) else "disabled"
+        print(f"  {ext['id']:<14} [{state}] ({ext['type']})")
+PY
+  fi
+  exit 0
+fi
 
 write_custom_provider() {
   local filename="$1"
@@ -300,16 +461,8 @@ if [ "$subcommand" = "web" ]; then
     fi
   fi
 
-  server_py="$DEFAULT_SERVER_PY"
-  if [[ "$server_py" == "@serverPy@" ]] || [ ! -f "$server_py" ]; then
-    if [ -f "$(dirname "$script_dir")/libexec/cadre/server.py" ]; then
-      server_py="$(dirname "$script_dir")/libexec/cadre/server.py"
-    elif [ -f "$script_dir/server.py" ]; then
-      server_py="$script_dir/server.py"
-    fi
-  fi
-
-  if [ -z "$web_dir" ] || [ ! -d "$web_dir" ] || [ ! -f "$server_py" ]; then
+  server_py=$(resolve_server_py || true)
+  if [ -z "$web_dir" ] || [ ! -d "$web_dir" ] || [ -z "$server_py" ]; then
     echo "Cadre Web assets not found. Build with 'nix build .#web' or 'npm --prefix web run build'." >&2
     exit 1
   fi
@@ -324,14 +477,20 @@ if [ "$subcommand" = "web" ]; then
     fi
   fi
 
-  exec python3 "$server_py" \
-    --host "$web_host" \
-    --port "$web_port" \
-    --static-dir "$web_dir" \
-    --backend "$backend" \
-    --default-model "$model" \
-    --mesh-url "http://127.0.0.1:$mesh_port" \
+  server_args=(
+    --host "$web_host"
+    --port "$web_port"
+    --static-dir "$web_dir"
+    --backend "$backend"
+    --default-model "$model"
+    --mesh-url "http://127.0.0.1:$mesh_port"
     --ollama-url "http://127.0.0.1:$ollama_port"
+  )
+  agents_file=$(resolve_agents_file || true)
+  if [ -n "$agents_file" ]; then
+    server_args+=(--agents-file "$agents_file")
+  fi
+  exec python3 "$server_py" "${server_args[@]}"
 fi
 
 if ! backend_alive "$backend" "$port"; then
@@ -412,6 +571,19 @@ if [ "${#served[@]}" -gt 0 ]; then
 fi
 model=${model:-$default_model}
 
+session_sys_args=()
+if [ -n "$agent_system_prompt" ]; then
+  session_sys_args=(--system "$agent_system_prompt")
+fi
+
+run_review() {
+  if [ "${#extra_args[@]}" -eq 0 ] || [[ "${extra_args[0]}" == -* ]]; then
+    run_client review review "${extra_args[@]}"
+  else
+    run_client review "${extra_args[@]}"
+  fi
+}
+
 if [ "$backend" = "ollama" ]; then
   if [ "$subcommand" = "gui" ]; then
     write_custom_provider \
@@ -428,11 +600,15 @@ if [ "$backend" = "ollama" ]; then
     exit $?
   fi
 
-  echo "Starting cadre agent on Ollama ($model at http://127.0.0.1:$port)..."
   export OLLAMA_HOST="http://127.0.0.1:$port"
   export GOOSE_PROVIDER=ollama
   export GOOSE_MODEL="$model"
-  run_client goose session --provider ollama --model "$model" "${extra_args[@]}"
+  if [ "$subcommand" = "review" ]; then
+    run_review
+    exit $?
+  fi
+  echo "Starting cadre agent on Ollama ($model at http://127.0.0.1:$port)..."
+  run_client goose session --provider ollama --model "$model" "${session_sys_args[@]}" "${extra_args[@]}"
 else
   write_custom_provider \
     "mesh.json" \
@@ -448,8 +624,15 @@ else
   if [ "$subcommand" = "gui" ]; then
     echo "Opening Berd on MeshLLM with $model..."
     run_client berd "${extra_args[@]}"
+  elif [ "$subcommand" = "review" ]; then
+    # block-review gives each pass a fresh GOOSE_PATH_ROOT, so use Goose's built-in openai provider.
+    export GOOSE_PROVIDER=openai
+    export OPENAI_HOST="http://127.0.0.1:$port"
+    export OPENAI_BASE_PATH="v1/chat/completions"
+    export OPENAI_API_KEY="${OPENAI_API_KEY:-cadre-local}"
+    run_review
   else
     echo "Starting cadre agent on MeshLLM ($model at http://127.0.0.1:$port/v1)..."
-    run_client goose session --provider mesh --model "$model" "${extra_args[@]}"
+    run_client goose session --provider mesh --model "$model" "${session_sys_args[@]}" "${extra_args[@]}"
   fi
 fi

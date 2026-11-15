@@ -9,6 +9,7 @@ export const INITIAL_TEAMMATES: AgentTeammate[] = [
 		description:
 			'General engineering teammate powered by Goose ACP. Plans architectures, runs commands, and drives pairing.',
 		avatar: '◈',
+		harness: 'goose',
 		backend: 'mesh',
 		model: 'Qwen3-8B-Q4_K_M',
 		tools: ['bash', 'edit', 'read', 'git', 'browse'],
@@ -22,9 +23,10 @@ export const INITIAL_TEAMMATES: AgentTeammate[] = [
 		description:
 			'Code-specialist teammate focused on AST manipulation, compiler error diagnostics, and test suites.',
 		avatar: '⚡',
+		harness: 'pi-acp',
 		backend: 'ollama',
 		model: 'qwen2.5-coder:14b',
-		tools: ['edit', 'read', 'test', 'ast-grep'],
+		tools: ['edit', 'read', 'test', 'review'],
 		status: 'idle'
 	},
 	{
@@ -35,6 +37,7 @@ export const INITIAL_TEAMMATES: AgentTeammate[] = [
 		description:
 			'Fleet infrastructure specialist. Manages JJ workspaces, evaluates Nix closures, and checks sops secrets.',
 		avatar: '🛡️',
+		harness: 'buzz-agent',
 		backend: 'mesh',
 		model: 'Qwen3-8B-Q4_K_M',
 		tools: ['nix', 'just', 'jj', 'sops', 'ssh'],

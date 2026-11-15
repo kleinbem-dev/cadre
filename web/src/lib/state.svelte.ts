@@ -5,6 +5,8 @@ import type {
 	ChatMessage,
 	ComputeNode,
 	ConnectionMode,
+	ExtensionReadiness,
+	HarnessReadiness,
 	TabId
 } from './types.js';
 
@@ -13,30 +15,37 @@ export function resolveTeammates(
 	status: BackendStatusResponse | null,
 	mode: ConnectionMode,
 	selectedAgentId: string,
-	sending: boolean
+	sending: boolean,
+	isConfigured?: boolean
 ): AgentTeammate[] {
+	const useConfigured = isConfigured ?? Boolean(status?.agents?.length && base === status.agents);
+	const resolvedSelectedId = base.some((t) => t.id === selectedAgentId)
+		? selectedAgentId
+		: (base[0]?.id ?? selectedAgentId);
+
 	return base.map((t) => {
-		const isSelectedBusy = sending && t.id === selectedAgentId;
+		const isSelectedBusy = sending && t.id === resolvedSelectedId;
 		if (mode === 'standby') {
 			return { ...t, status: 'offline' };
 		}
 		if (mode !== 'live' || !status) {
 			return { ...t, status: isSelectedBusy ? 'busy' : t.status };
 		}
+		const hasExplicitModel = useConfigured && Boolean(t.model && t.model !== 'cadre');
 		const matchingNode = status.nodes.find((n) => n.backend === t.backend);
 		if (matchingNode && matchingNode.activeModel && matchingNode.activeModel !== 'idle') {
 			return {
 				...t,
 				backend: matchingNode.backend,
-				model: matchingNode.activeModel,
+				model: hasExplicitModel ? t.model : matchingNode.activeModel,
 				status: isSelectedBusy ? 'busy' : 'idle'
 			};
 		}
 		if (status.activeBackend === 'mesh' || status.activeBackend === 'ollama') {
 			return {
 				...t,
-				backend: status.activeBackend,
-				model: status.defaultModel || t.model,
+				backend: useConfigured ? t.backend : status.activeBackend,
+				model: hasExplicitModel ? t.model : status.defaultModel || t.model,
 				status: isSelectedBusy ? 'busy' : 'idle'
 			};
 		}
@@ -62,9 +71,13 @@ export class CadreState {
 	#refreshSeq = 0;
 	#refreshAbort: AbortController | null = null;
 
+	baseTeammates = $derived<AgentTeammate[]>(
+		this.status?.agents && this.status.agents.length > 0 ? this.status.agents : INITIAL_TEAMMATES
+	);
+
 	teammates = $derived<AgentTeammate[]>(
 		resolveTeammates(
-			INITIAL_TEAMMATES,
+			this.baseTeammates,
 			this.status,
 			this.connectionMode,
 			this.selectedAgentId,
@@ -83,6 +96,10 @@ export class CadreState {
 	nodes = $derived<ComputeNode[]>(
 		!this.isReferenceNodes && this.status ? this.status.nodes : INITIAL_NODES
 	);
+
+	harnesses = $derived<HarnessReadiness[]>(this.status?.harnesses ?? []);
+
+	extensions = $derived<ExtensionReadiness[]>(this.status?.extensions ?? []);
 
 	chatEnabled = $derived(this.connectionMode === 'live' && Boolean(this.status?.chatEnabled));
 
@@ -105,7 +122,7 @@ export class CadreState {
 
 	selectAgent(agentId: string): void {
 		if (this.sending) return;
-		if (INITIAL_TEAMMATES.some((t) => t.id === agentId)) {
+		if (this.teammates.some((t) => t.id === agentId)) {
 			this.selectedAgentId = agentId;
 			this.activeTab = 'session';
 		}
@@ -220,6 +237,10 @@ export class CadreState {
 				.slice(-16)
 				.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 
+			const sysContent =
+				agent.systemPrompt ||
+				`You are ${agent.name} (${agent.handle}), ${agent.role}. ${agent.description}`;
+
 			const resp = await fetch('/api/chat', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -229,7 +250,7 @@ export class CadreState {
 					messages: [
 						{
 							role: 'system',
-							content: `You are ${agent.name} (${agent.handle}), ${agent.role}. ${agent.description}`
+							content: sysContent
 						},
 						...history
 					]

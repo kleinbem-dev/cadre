@@ -1,13 +1,17 @@
 <script lang="ts">
-	import type { ComputeNode } from '../types.js';
+	import type { ComputeNode, ExtensionReadiness, HarnessReadiness } from '../types.js';
 	import StatusDot from '@kleinbem/web-config/components/StatusDot';
 
 	let {
 		nodes = [],
-		isReference = false
+		isReference = false,
+		harnesses = [],
+		extensions = []
 	}: {
 		nodes: ComputeNode[];
 		isReference?: boolean;
+		harnesses?: HarnessReadiness[];
+		extensions?: ExtensionReadiness[];
 	} = $props();
 
 	let totalVramUsedNum = $derived(nodes.reduce((acc, n) => acc + n.vramUsedGb, 0));
@@ -158,4 +162,43 @@
 			{/each}
 		</div>
 	</div>
+
+	{#if harnesses.length > 0 || extensions.length > 0}
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+			{#if harnesses.length > 0}
+				<div class="p-5 rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 shadow-xs">
+					<h3 class="text-xs font-bold uppercase tracking-wider text-zinc-400 font-mono mb-3">
+						ACP Harnesses ({harnesses.filter((h) => h.available).length}/{harnesses.length} ready)
+					</h3>
+					<div class="grid grid-cols-2 gap-2 text-xs font-mono">
+						{#each harnesses as h (h.id)}
+							<div class="flex items-center justify-between px-3 py-2 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200/60 dark:border-zinc-700/60">
+								<span class="text-zinc-800 dark:text-zinc-200">{h.id}</span>
+								<span class={h.available ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400'}>
+									{h.available ? 'ready' : 'missing'}
+								</span>
+							</div>
+						{/each}
+					</div>
+				</div>
+			{/if}
+
+			{#if extensions.length > 0}
+				<div class="p-5 rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 shadow-xs">
+					<h3 class="text-xs font-bold uppercase tracking-wider text-zinc-400 font-mono mb-3">
+						Goose MCP Extensions ({extensions.filter((e) => e.enabled).length}/{extensions.length} enabled)
+					</h3>
+					<div class="flex flex-wrap gap-2 text-xs font-mono">
+						{#each extensions as ext (ext.id)}
+							<div class="flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200/60 dark:border-zinc-700/60">
+								<StatusDot status={ext.enabled ? 'healthy' : 'down'} size="sm" />
+								<span class="text-zinc-800 dark:text-zinc-200">{ext.name}</span>
+								<span class="text-[10px] text-zinc-400">{ext.type}</span>
+							</div>
+						{/each}
+					</div>
+				</div>
+			{/if}
+		</div>
+	{/if}
 </div>
