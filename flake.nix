@@ -86,6 +86,12 @@
           cadre = pkgs.callPackage ./package.nix {
             mesh-llm = pick "mesh-llm";
           };
+          meshStub = (pkgs.writeShellScriptBin "mesh-llm" "exit 0").overrideAttrs {
+            meta = {
+              mainProgram = "mesh-llm";
+              platforms = lib.platforms.unix;
+            };
+          };
         in
         {
           packages = lib.mapAttrs (name: _: pick name) stack // {
@@ -103,7 +109,7 @@
           };
 
           checks = {
-            inherit (cadre.tests) cli;
+            inherit ((cadre.override { mesh-llm = meshStub; }).tests) cli;
           }
           // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             module = import ./tests/module.nix {

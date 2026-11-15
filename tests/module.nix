@@ -3,18 +3,28 @@
 { pkgs, module }:
 
 let
+  # Stub external C++/Rust/Go binaries (evaluated in `packages.*`) so headless module checks stay fast on CI runners.
+  stubOverlay = final: _prev: {
+    mesh-llm = (final.writeShellScriptBin "mesh-llm" "exit 0").overrideAttrs {
+      meta = {
+        mainProgram = "mesh-llm";
+        platforms = final.lib.platforms.unix;
+      };
+    };
+    berd = final.writeShellScriptBin "berd" "exit 0";
+    buzz-app = final.writeShellScriptBin "buzz-app" "exit 0";
+    buzz-cli = final.writeShellScriptBin "buzz" "exit 0";
+    buzz-acp = final.writeShellScriptBin "buzz-acp" "exit 0";
+    buzz-agent = final.writeShellScriptBin "buzz-agent" "exit 0";
+    amp-acp = final.writeShellScriptBin "amp-acp" "exit 0";
+    block-review = final.writeShellScriptBin "review" "exit 0";
+    ai-rules = final.writeShellScriptBin "ai-rules" "exit 0";
+    braindump = final.writeShellScriptBin "braindump" "exit 0";
+  };
+
   nixos = pkgs.nixos {
     imports = [ module ];
-    nixpkgs.overlays = [
-      # Stub heavy Tauri GUI apps and extra Rust workspace crates so headless module checks stay fast.
-      (final: _prev: {
-        berd = final.writeShellScriptBin "berd" "exit 0";
-        buzz-app = final.writeShellScriptBin "buzz-app" "exit 0";
-        buzz-agent = final.writeShellScriptBin "buzz-agent" "exit 0";
-        amp-acp = final.writeShellScriptBin "amp-acp" "exit 0";
-        ai-rules = final.writeShellScriptBin "ai-rules" "exit 0";
-      })
-    ];
+    nixpkgs.overlays = [ stubOverlay ];
     services.cadre = {
       enable = true;
       models = [ "Qwen3-8B-Q4_K_M" ];
@@ -96,11 +106,7 @@ let
 
   nixosMissingAmpEnv = pkgs.nixos {
     imports = [ module ];
-    nixpkgs.overlays = [
-      (final: _prev: {
-        amp-acp = final.writeShellScriptBin "amp-acp" "exit 0";
-      })
-    ];
+    nixpkgs.overlays = [ stubOverlay ];
     services.cadre = {
       enable = true;
       buzz.agents.badAmp = {
@@ -121,6 +127,7 @@ let
 
   nixosOwnerWarning = pkgs.nixos {
     imports = [ module ];
+    nixpkgs.overlays = [ stubOverlay ];
     services.cadre = {
       enable = true;
       buzz.agents.silent = {
@@ -139,6 +146,7 @@ let
 
   nixosNoAuto = pkgs.nixos {
     imports = [ module ];
+    nixpkgs.overlays = [ stubOverlay ];
     services.cadre = {
       enable = true;
       autoStart = false;

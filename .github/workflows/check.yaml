@@ -22,7 +22,7 @@ jobs:
           persist-credentials: false
       - uses: kleinbem/actions/nix-setup@f1b4f5fc52ea31b1f9e53ca29170570fe4651c7d # v1.7.1
       - name: Checks
-        run: nix flake check
+        run: nix flake check -j 2
       - name: Formatting
         run: nix fmt -- --fail-on-change
       # The public cache users substitute from (cache.kleinbem.dev, shared

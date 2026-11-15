@@ -7,12 +7,22 @@
 }:
 
 let
-  # Stub heavy Tauri GUI apps and extra Rust workspace crates so headless HM checks stay fast.
+  # Stub external C++/Rust/Go binaries (evaluated in `packages.*`) so headless HM checks stay fast on CI runners;
+  # leave `pi-acp` and `amp-acp` unstubbed so `packages` and `legacyPackages` wiring is exercised end-to-end.
   testPkgs = pkgs.extend (
     final: _prev: {
+      mesh-llm = (final.writeShellScriptBin "mesh-llm" "exit 0").overrideAttrs {
+        meta = {
+          mainProgram = "mesh-llm";
+          platforms = final.lib.platforms.unix;
+        };
+      };
       berd = final.writeShellScriptBin "berd" "exit 0";
       buzz-app = final.writeShellScriptBin "buzz-app" "exit 0";
+      buzz-cli = final.writeShellScriptBin "buzz" "exit 0";
+      block-review = final.writeShellScriptBin "review" "exit 0";
       ai-rules = final.writeShellScriptBin "ai-rules" "exit 0";
+      braindump = final.writeShellScriptBin "braindump" "exit 0";
     }
   );
 
