@@ -226,7 +226,7 @@ if [ "$subcommand" = "agents" ]; then
     echo "Declare teammates under 'services.cadre.agents' in NixOS or Home Manager."
     exit 0
   fi
-  jq -r '.[] | "\(.handle)\t\(.name)\t[\(.harness // "goose") · \(.backend // "mesh") · \(.model // "default")]\t\(.role)"' "$agents_file"
+  jq -r '.[] | "\(.handle)\t\(.name)\t[\(.harness // "goose") · \(.backend // "mesh") · \(if (.model // "") != "" then .model else "auto" end)]\t\(.role)"' "$agents_file"
   exit 0
 fi
 
@@ -625,6 +625,11 @@ else
     echo "Opening Berd on MeshLLM with $model..."
     run_client berd "${extra_args[@]}"
   elif [ "$subcommand" = "review" ]; then
+    # block-review gives each pass a fresh GOOSE_PATH_ROOT, so use Goose's built-in openai provider.
+    export GOOSE_PROVIDER=openai
+    export OPENAI_HOST="http://127.0.0.1:$port"
+    export OPENAI_BASE_PATH="v1/chat/completions"
+    export OPENAI_API_KEY="${OPENAI_API_KEY:-cadre-local}"
     run_review
   else
     echo "Starting cadre agent on MeshLLM ($model at http://127.0.0.1:$port/v1)..."

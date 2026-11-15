@@ -11,6 +11,7 @@ let
         berd = final.writeShellScriptBin "berd" "exit 0";
         buzz-app = final.writeShellScriptBin "buzz-app" "exit 0";
         buzz-agent = final.writeShellScriptBin "buzz-agent" "exit 0";
+        amp-acp = final.writeShellScriptBin "amp-acp" "exit 0";
         ai-rules = final.writeShellScriptBin "ai-rules" "exit 0";
       })
     ];
@@ -21,15 +22,21 @@ let
       extraArgs = [ "--test-extra-arg" ];
       tools.enable = true;
       desktop.enable = true;
-      agents.reviewer = {
-        name = "Cadre Reviewer";
-        role = "Security & Diff Auditor";
-        harness = "pi-acp";
-        systemPrompt = "Check every diff for regressions.";
-        tools = [
-          "git"
-          "review"
-        ];
+      agents = {
+        reviewer = {
+          name = "Cadre Reviewer";
+          role = "Security & Diff Auditor";
+          harness = "pi-acp";
+          model = "Qwen3-Reviewer";
+          systemPrompt = "Check every diff for regressions.";
+          tools = [
+            "git"
+            "review"
+          ];
+        };
+        autoHelper = {
+          name = "Auto Helper";
+        };
       };
       web = {
         enable = true;
@@ -61,6 +68,14 @@ let
           respondTo = "owner-only";
           owner = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d";
         };
+        ampBot = {
+          relayUrl = "wss://buzz.example.com";
+          privateKeyFile = "/run/secrets/buzz-amp-key";
+          environmentFile = "/run/secrets/buzz-amp.env";
+          harness = "amp-acp";
+          respondTo = "owner-only";
+          owner = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d";
+        };
       };
     };
     boot.loader.grub.enable = false;
@@ -75,8 +90,34 @@ let
   buzzUnit = nixos.config.systemd.units."cadre-buzz-helper.service".unit;
   piUnit = nixos.config.systemd.units."cadre-buzz-piBot.service".unit;
   nativeUnit = nixos.config.systemd.units."cadre-buzz-nativeBot.service".unit;
+  ampUnit = nixos.config.systemd.units."cadre-buzz-ampBot.service".unit;
   webUnit = nixos.config.systemd.units."cadre-web.service".unit;
   agentsEtc = nixos.config.environment.etc."cadre/agents.json".source;
+
+  nixosMissingAmpEnv = pkgs.nixos {
+    imports = [ module ];
+    nixpkgs.overlays = [
+      (final: _prev: {
+        amp-acp = final.writeShellScriptBin "amp-acp" "exit 0";
+      })
+    ];
+    services.cadre = {
+      enable = true;
+      buzz.agents.badAmp = {
+        relayUrl = "wss://buzz.example.com";
+        privateKeyFile = "/run/secrets/buzz-amp-key";
+        harness = "amp-acp";
+        owner = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d";
+      };
+    };
+    boot.loader.grub.enable = false;
+    documentation.enable = false;
+    fileSystems."/" = {
+      device = "none";
+      fsType = "tmpfs";
+    };
+    system.stateVersion = "26.05";
+  };
 
   nixosOwnerWarning = pkgs.nixos {
     imports = [ module ];
@@ -164,16 +205,26 @@ pkgs.runCommand "cadre-module" { } ''
   grep -q 'SystemCallFilter=@system-service' ${buzzUnit}/cadre-buzz-helper.service
   grep -q 'UMask=0077' ${buzzUnit}/cadre-buzz-helper.service
 
-  # Non-goose ACP adapters: zero-arg stdio launch, thread scoping, system prompt file, and buzz-agent local OpenAI wiring
+  # Non-goose ACP adapters: zero-arg stdio launch, Pi provider/settings files, Amp EnvironmentFile, and buzz-agent local OpenAI wiring
   grep -q 'BUZZ_ACP_AGENT_COMMAND=pi-acp' ${piUnit}/cadre-buzz-piBot.service
   grep -q 'Environment="BUZZ_ACP_AGENT_ARGS="' ${piUnit}/cadre-buzz-piBot.service
+  grep -q 'BUZZ_ACP_MODEL=cadre/cadre' ${piUnit}/cadre-buzz-piBot.service
   grep -q 'BUZZ_ACP_SESSION_POLICY=thread' ${piUnit}/cadre-buzz-piBot.service
   grep -q 'BUZZ_ACP_SYSTEM_PROMPT_FILE=' ${piUnit}/cadre-buzz-piBot.service
+  piStart=$(sed -n 's/^ExecStart=\([^ ]*\).*/\1/p' ${piUnit}/cadre-buzz-piBot.service)
+  grep -q '\.pi/agent/models\.json' "$piStart"
+  grep -q '\.pi/agent/settings\.json' "$piStart"
+  grep -Eq '"openai-completions"' $(grep -o '/nix/store/[^ ]*pi-models.json' "$piStart")
+  grep -Eq '"defaultProvider": *"cadre"' $(grep -o '/nix/store/[^ ]*pi-settings.json' "$piStart")
 
   grep -q 'BUZZ_ACP_AGENT_COMMAND=buzz-agent' ${nativeUnit}/cadre-buzz-nativeBot.service
   grep -q 'BUZZ_AGENT_PROVIDER=openai' ${nativeUnit}/cadre-buzz-nativeBot.service
   grep -q 'OPENAI_COMPAT_BASE_URL=http://127.0.0.1:9337/v1' ${nativeUnit}/cadre-buzz-nativeBot.service
   grep -q 'OPENAI_COMPAT_API=chat' ${nativeUnit}/cadre-buzz-nativeBot.service
+
+  grep -q 'BUZZ_ACP_AGENT_COMMAND=amp-acp' ${ampUnit}/cadre-buzz-ampBot.service
+  grep -q 'Environment="BUZZ_ACP_AGENT_ARGS="' ${ampUnit}/cadre-buzz-ampBot.service
+  grep -q 'EnvironmentFile=/run/secrets/buzz-amp.env' ${ampUnit}/cadre-buzz-ampBot.service
 
   grep -q 'server.py' ${webUnit}/cadre-web.service
   grep -q '8384' ${webUnit}/cadre-web.service
@@ -182,8 +233,21 @@ pkgs.runCommand "cadre-module" { } ''
   grep -q 'DynamicUser=true' ${webUnit}/cadre-web.service
   grep -q 'UMask=0077' ${webUnit}/cadre-web.service
 
-  grep -q '"handle": "@reviewer"' ${agentsEtc} || grep -q '"handle":"@reviewer"' ${agentsEtc}
-  grep -q '"harness": "pi-acp"' ${agentsEtc} || grep -q '"harness":"pi-acp"' ${agentsEtc}
+  grep -Eq '"handle": *"@reviewer"' ${agentsEtc}
+  grep -Eq '"harness": *"pi-acp"' ${agentsEtc}
+  grep -Eq '"model": *"Qwen3-Reviewer"' ${agentsEtc}
+  grep -Eq '"model": *""' ${agentsEtc}
+
+  test "${
+    if
+      builtins.any (
+        a: !a.assertion && pkgs.lib.hasInfix "environmentFile" a.message
+      ) nixosMissingAmpEnv.config.assertions
+    then
+      "1"
+    else
+      "0"
+  }" = "1"
 
   test "${
     if (builtins.elem 8384 nixos.config.networking.firewall.allowedTCPPorts) then "1" else "0"

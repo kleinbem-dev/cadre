@@ -1,6 +1,9 @@
 # services.cadre for home-manager: private AI teammates on your own compute.
 # User service on any Linux (systemd) or macOS (launchd), NixOS or not.
-{ packages }:
+{
+  packages,
+  legacyPackages ? { },
+}:
 {
   config,
   lib,
@@ -11,7 +14,8 @@
 let
   cfg = config.services.cadre;
   agentsLib = import ../shared/agents.nix { inherit lib; };
-  flakePkgs = packages.${pkgs.stdenv.hostPlatform.system};
+  hostSystem = pkgs.stdenv.hostPlatform.system;
+  flakePkgs = packages.${hostSystem} // (legacyPackages.${hostSystem} or { });
   # nixpkgs ships an unrelated Ruby gem at `pkgs.cadre`, so only prefer `pkgs.cadre`
   # when the user applied this flake's overlay (`cadre-ai` is unambiguous).
   isOurCadre = pkg: (pkg.meta.homepage or "") == "https://github.com/kleinbem-dev/cadre";
@@ -47,7 +51,6 @@ let
     agentsLib.serializeAgents {
       inherit (cfg) agents;
       defaultBackend = cfg.backend;
-      inherit defaultModel;
     }
   );
 
@@ -221,10 +224,15 @@ in
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
       {
-        assertions = lib.mapAttrsToList (name: _: {
-          assertion = builtins.match "^[a-zA-Z0-9_-]+$" name != null;
-          message = "services.cadre.agents name '${name}' must match ^[a-zA-Z0-9_-]+$";
-        }) cfg.agents;
+        assertions =
+          (lib.mapAttrsToList (name: _: {
+            assertion = builtins.match "^[a-zA-Z0-9_-]+$" name != null;
+            message = "services.cadre.agents name '${name}' must match ^[a-zA-Z0-9_-]+$";
+          }) cfg.agents)
+          ++ (lib.mapAttrsToList (name: agent: {
+            assertion = harnessPkgFor agent.harness != null;
+            message = "services.cadre.agents.${name}: harness package '${agent.harness}' is unavailable on ${hostSystem}.";
+          }) cfg.agents);
       }
 
       (lib.mkIf (cfg.agents != { }) {

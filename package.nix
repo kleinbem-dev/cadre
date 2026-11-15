@@ -6,6 +6,7 @@
   shellcheck,
   bash,
   bashNonInteractive,
+  cacert,
   coreutils,
   curl,
   goose-cli,
@@ -146,6 +147,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
           __darwinAllowLocalNetworking = true;
           nativeBuildInputs = [
             bash
+            cacert
             coreutils
             curl
             jq

@@ -186,8 +186,26 @@ def scan_goose_extensions(config_path: str | None = None) -> list[dict]:
 
     def _strip_scalar(val: str) -> str:
         v = val.strip()
-        if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
-            return v[1:-1]
+        if not v or v.startswith("#"):
+            return ""
+        if v[0] in ("'", '"'):
+            quote = v[0]
+            out: list[str] = []
+            escaped = False
+            for ch in v[1:]:
+                if escaped:
+                    out.append(ch)
+                    escaped = False
+                elif quote == '"' and ch == "\\":
+                    escaped = True
+                elif ch == quote:
+                    return "".join(out)
+                else:
+                    out.append(ch)
+            return "".join(out)
+        for idx, ch in enumerate(v):
+            if ch == "#" and idx > 0 and v[idx - 1].isspace():
+                return v[:idx].rstrip()
         return v
 
     for raw_line in lines:

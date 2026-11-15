@@ -225,9 +225,10 @@ describe('seed teammates, compute nodes, and live state resolution', () => {
 		assert.match(store.messages.at(-1)?.content ?? '', /enableChatProxy/);
 	});
 
-	it('resolves declarative status.agents, custom systemPrompt, and harness/MCP readiness', async () => {
+	it('resolves declarative status.agents, explicit vs inherited models, custom systemPrompt, and harness/MCP readiness', async () => {
 		const store = new CadreState();
 		let capturedSystemPrompt = '';
+		let capturedModel = '';
 
 		globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
 			const url = String(input);
@@ -264,9 +265,22 @@ describe('seed teammates, compute nodes, and live state resolution', () => {
 									avatar: '🔍',
 									harness: 'pi-acp',
 									backend: 'mesh',
-									model: 'Qwen3-Local',
+									model: 'Qwen3-Reviewer-32B',
 									systemPrompt: 'Audit diffs strictly for SSRF and auth bypasses.',
 									tools: ['git', 'review'],
+									status: 'idle'
+								},
+								{
+									id: 'auto-helper',
+									handle: '@helper',
+									name: 'Auto Helper',
+									role: 'General Assistant',
+									description: 'Inherits active node model.',
+									avatar: '◈',
+									harness: 'goose',
+									backend: 'mesh',
+									model: '',
+									tools: ['git'],
 									status: 'idle'
 								}
 							],
@@ -282,8 +296,10 @@ describe('seed teammates, compute nodes, and live state resolution', () => {
 				);
 			}
 			const parsed = JSON.parse(String(init?.body ?? '{}')) as {
+				model?: string;
 				messages: Array<{ role: string; content: string }>;
 			};
+			capturedModel = parsed.model ?? '';
 			capturedSystemPrompt = parsed.messages.find((m) => m.role === 'system')?.content ?? '';
 			return Promise.resolve(
 				new Response(JSON.stringify({ reply: 'audit clean' }), {
@@ -294,9 +310,11 @@ describe('seed teammates, compute nodes, and live state resolution', () => {
 		}) as typeof fetch;
 
 		await store.refreshStatus(true);
-		assert.equal(store.teammates.length, 1);
+		assert.equal(store.teammates.length, 2);
 		assert.equal(store.activeAgent.id, 'sec-reviewer');
 		assert.equal(store.activeAgent.harness, 'pi-acp');
+		assert.equal(store.activeAgent.model, 'Qwen3-Reviewer-32B');
+		assert.equal(store.teammates[1]?.model, 'Qwen3-Local');
 		assert.equal(store.harnesses.length, 3);
 		assert.equal(store.extensions[0]?.name, 'Memory');
 
@@ -306,6 +324,7 @@ describe('seed teammates, compute nodes, and live state resolution', () => {
 		assert.equal(store.activeTab, 'session');
 
 		await store.sendMessage('review HEAD');
+		assert.equal(capturedModel, 'Qwen3-Reviewer-32B');
 		assert.equal(capturedSystemPrompt, 'Audit diffs strictly for SSRF and auth bypasses.');
 	});
 });

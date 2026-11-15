@@ -131,6 +131,7 @@ Run `cadre` as a system service on your machines (and optionally self-host a Buz
               relayUrl = "wss://buzz.example.com";
               privateKeyFile = "/run/secrets/buzz-cadre-key";
               harness = "goose"; # goose | buzz-agent | pi-acp | amp-acp
+              # environmentFile = "/run/secrets/buzz-amp.env"; # required (AMP_API_KEY) when harness = "amp-acp"
               sessionPolicy = "thread"; # channel | thread
               respondTo = "owner-only"; # or "allowlist", "anyone"
               owner = "hex-pubkey-here";

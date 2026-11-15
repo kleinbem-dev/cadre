@@ -15,8 +15,10 @@ export function resolveTeammates(
 	status: BackendStatusResponse | null,
 	mode: ConnectionMode,
 	selectedAgentId: string,
-	sending: boolean
+	sending: boolean,
+	isConfigured?: boolean
 ): AgentTeammate[] {
+	const useConfigured = isConfigured ?? Boolean(status?.agents?.length && base === status.agents);
 	const resolvedSelectedId = base.some((t) => t.id === selectedAgentId)
 		? selectedAgentId
 		: (base[0]?.id ?? selectedAgentId);
@@ -29,20 +31,21 @@ export function resolveTeammates(
 		if (mode !== 'live' || !status) {
 			return { ...t, status: isSelectedBusy ? 'busy' : t.status };
 		}
+		const hasExplicitModel = useConfigured && Boolean(t.model && t.model !== 'cadre');
 		const matchingNode = status.nodes.find((n) => n.backend === t.backend);
 		if (matchingNode && matchingNode.activeModel && matchingNode.activeModel !== 'idle') {
 			return {
 				...t,
 				backend: matchingNode.backend,
-				model: matchingNode.activeModel,
+				model: hasExplicitModel ? t.model : matchingNode.activeModel,
 				status: isSelectedBusy ? 'busy' : 'idle'
 			};
 		}
 		if (status.activeBackend === 'mesh' || status.activeBackend === 'ollama') {
 			return {
 				...t,
-				backend: status.activeBackend,
-				model: status.defaultModel || t.model,
+				backend: useConfigured ? t.backend : status.activeBackend,
+				model: hasExplicitModel ? t.model : status.defaultModel || t.model,
 				status: isSelectedBusy ? 'busy' : 'idle'
 			};
 		}

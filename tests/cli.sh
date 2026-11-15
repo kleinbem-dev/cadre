@@ -19,6 +19,7 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT
+trap 'echo "ERR at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 fail() {
   echo "FAIL: $*" >&2
@@ -56,8 +57,8 @@ EOF
 
 cat >"$stubs/review" <<EOF
 #!$bash_bin
-printf 'CMD=review ARGS=%s PROVIDER=%s MODEL=%s TELEMETRY=%s\n' \
-  "\$*" "\${GOOSE_PROVIDER:-}" "\${GOOSE_MODEL:-}" "\${GOOSE_TELEMETRY_OFF:-}" >"\$STUB_OUT"
+printf 'CMD=review ARGS=%s PROVIDER=%s MODEL=%s TELEMETRY=%s OPENAI_HOST=%s OPENAI_BASE_PATH=%s\n' \
+  "\$*" "\${GOOSE_PROVIDER:-}" "\${GOOSE_MODEL:-}" "\${GOOSE_TELEMETRY_OFF:-}" "\${OPENAI_HOST:-}" "\${OPENAI_BASE_PATH:-}" >"\$STUB_OUT"
 EOF
 
 cat >"$stubs/ai-rules" <<EOF
@@ -138,15 +139,15 @@ cat >"$XDG_CONFIG_HOME/goose/config.yaml" <<'YAML'
 GOOSE_PROVIDER: cadre
 extensions:
   memory:
-    name: Memory Vault
-    type: stdio
-    enabled: true
+    name: Memory Vault # primary MCP store
+    type: stdio # local child process
+    enabled: true # active
     envs:
       SUPER_SECRET_TOKEN: top-secret-do-not-leak-999
   disabled_ext:
-    name: Legacy Tool
+    name: "Legacy Tool #1" # quoted hash preserved, trailing comment stripped
     type: sse
-    enabled: false
+    enabled: false # temporarily disabled
 YAML
 
 agents_out=$("$CADRE_BIN" agents)
@@ -180,15 +181,36 @@ class H(http.server.BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or "0")
             req = json.loads(self.rfile.read(length).decode())
             user_text = req["messages"][-1]["content"]
-            body = json.dumps({
-                "model": req["model"],
-                "choices": [{"message": {"role": "assistant", "content": f"ack:{user_text}"}}],
-            }).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            if req.get("stream"):
+                body = (
+                    "data: "
+                    + json.dumps({
+                        "id": "chatcmpl-1",
+                        "object": "chat.completion.chunk",
+                        "model": req["model"],
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"role": "assistant", "content": f"ack:{user_text}"},
+                            "finish_reason": "stop",
+                        }],
+                    })
+                    + "\n\ndata: [DONE]\n\n"
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                body = json.dumps({
+                    "model": req["model"],
+                    "choices": [{"message": {"role": "assistant", "content": f"ack:{user_text}"}}],
+                }).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
         else:
             self.send_response(404)
             self.end_headers()
@@ -244,8 +266,30 @@ fi
 # `cadre review` wires local provider + model and prepends `review` subcommand for flags.
 : >"$STUB_OUT"
 PATH="$stubs:$PATH" "$CADRE_BIN" review --backend mesh --port "$mesh_port" -- -base main >/dev/null
-grep -q "CMD=review ARGS=review -base main PROVIDER=mesh MODEL=Qwen3-Test-4B TELEMETRY=1" "$STUB_OUT" ||
-  fail "unexpected review stub output: $(cat "$STUB_OUT")"
+grep -q "CMD=review ARGS=review -base main PROVIDER=openai MODEL=Qwen3-Test-4B TELEMETRY=1 OPENAI_HOST=http://127.0.0.1:$mesh_port OPENAI_BASE_PATH=v1/chat/completions" "$STUB_OUT" ||
+  fail "unexpected mesh review stub output: $(cat "$STUB_OUT")"
+
+: >"$STUB_OUT"
+PATH="$stubs:$PATH" "$CADRE_BIN" review --backend ollama --port "$ollama_port" -- -base main >/dev/null
+grep -q "CMD=review ARGS=review -base main PROVIDER=ollama MODEL=qwen2.5-coder:7b TELEMETRY=1" "$STUB_OUT" ||
+  fail "unexpected ollama review stub output: $(cat "$STUB_OUT")"
+
+# Exercise real `goose` provider loading inside an isolated GOOSE_PATH_ROOT (mirrors block-review).
+real_review_bin="$work/real-review-bin"
+mkdir -p "$real_review_bin" "$work/isolated-goose-root"
+cat >"$real_review_bin/review" <<EOF
+#!$bash_bin
+export GOOSE_PATH_ROOT="$work/isolated-goose-root"
+export GOOSE_DISABLE_KEYRING=1
+exec goose run --no-profile --no-session --text "isolated-review-pass" >"\$STUB_OUT" 2>&1
+EOF
+chmod +x "$real_review_bin/review"
+: >"$STUB_OUT"
+if ! PATH="$real_review_bin:$PATH" "$CADRE_BIN" review --backend mesh --port "$mesh_port" >/dev/null; then
+  fail "isolated GOOSE_PATH_ROOT mesh review exited non-zero: $(cat "$STUB_OUT")"
+fi
+grep -q "ack:isolated-review-pass" "$STUB_OUT" ||
+  fail "isolated GOOSE_PATH_ROOT mesh review pass failed: $(cat "$STUB_OUT")"
 
 # Built wrapper end-to-end with real `goose-cli` (`-- --help` exits 0 after provider discovery)
 "$CADRE_BIN" --backend auto --port "$mesh_port" -- --help >/dev/null
@@ -373,6 +417,9 @@ status_json=$(curl -fsS "http://127.0.0.1:$web_port/api/status")
 [ "$(jq -r '.chatEnabled' <<<"$status_json")" = "true" ] || fail "expected chatEnabled=true on loopback"
 [ "$(jq -r '.agents[0].handle' <<<"$status_json")" = "@reviewer" ] || fail "expected @reviewer in /api/status: $status_json"
 [ "$(jq -r '.extensions[0].name' <<<"$status_json")" = "Memory Vault" ] || fail "expected Memory Vault extension: $status_json"
+[ "$(jq -r '.extensions[0].enabled' <<<"$status_json")" = "true" ] || fail "expected Memory Vault enabled=true: $status_json"
+[ "$(jq -r '.extensions[1].name' <<<"$status_json")" = "Legacy Tool #1" ] || fail "expected quoted # preserved in Legacy Tool #1: $status_json"
+[ "$(jq -r '.extensions[1].enabled' <<<"$status_json")" = "false" ] || fail "expected disabled_ext enabled=false despite inline comment: $status_json"
 if grep -q "top-secret-do-not-leak-999" <<<"$status_json"; then
   fail "/api/status leaked secret from config.yaml: $status_json"
 fi

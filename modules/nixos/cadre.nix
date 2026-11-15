@@ -20,19 +20,10 @@ let
     mesh-llm = if cfg.backend == "mesh" then cfg.package else null;
   };
 
-  defaultModel =
-    if cfg.models != [ ] then
-      builtins.head cfg.models
-    else if cfg.backend == "ollama" then
-      "qwen2.5-coder"
-    else
-      "Qwen3-8B-Q4_K_M";
-
   agentsJson = (pkgs.formats.json { }).generate "cadre-agents.json" (
     agentsLib.serializeAgents {
       inherit (cfg) agents;
       defaultBackend = cfg.backend;
-      inherit defaultModel;
     }
   );
 
@@ -199,10 +190,15 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    assertions = lib.mapAttrsToList (name: _: {
-      assertion = builtins.match "^[a-zA-Z0-9_-]+$" name != null;
-      message = "services.cadre.agents name '${name}' must match ^[a-zA-Z0-9_-]+$";
-    }) cfg.agents;
+    assertions =
+      (lib.mapAttrsToList (name: _: {
+        assertion = builtins.match "^[a-zA-Z0-9_-]+$" name != null;
+        message = "services.cadre.agents name '${name}' must match ^[a-zA-Z0-9_-]+$";
+      }) cfg.agents)
+      ++ (lib.mapAttrsToList (name: agent: {
+        assertion = harnessPkgFor agent.harness != null;
+        message = "services.cadre.agents.${name}: harness package '${agent.harness}' is unavailable (for unfree harnesses such as 'amp-acp', enable allowUnfree).";
+      }) cfg.agents);
 
     services = {
       ollama = lib.mkIf (cfg.backend == "ollama") {

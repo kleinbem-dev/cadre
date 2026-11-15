@@ -33,10 +33,17 @@ let
           models = [ "Qwen3-8B-Q4_K_M" ];
           joinFile = "/run/user/1000/cadre-join";
           extraArgs = [ "--hm-extra-flag" ];
-          agents.reviewer = {
-            name = "Cadre Reviewer";
-            harness = "pi-acp";
-            tools = [ "review" ];
+          agents = {
+            reviewer = {
+              name = "Cadre Reviewer";
+              harness = "pi-acp";
+              model = "Qwen3-Reviewer";
+              tools = [ "review" ];
+            };
+            amp = {
+              name = "Amp Helper";
+              harness = "amp-acp";
+            };
           };
         };
       }
@@ -82,6 +89,34 @@ let
     ];
   };
   filesOllamaNoAutoStart = homeOllamaNoAutoStart.activationPackage;
+
+  moduleWithoutLegacy = import ../modules/home-manager/cadre.nix {
+    packages.${pkgs.stdenv.hostPlatform.system} = {
+      cadre = pkgs.callPackage ../package.nix { mesh-llm = null; };
+      inherit (pkgs) goose-cli;
+      mesh-llm = pkgs.hello;
+    };
+    legacyPackages = { };
+  };
+
+  hmMissingHarness = home-manager.lib.homeManagerConfiguration {
+    inherit pkgs;
+    modules = [
+      moduleWithoutLegacy
+      {
+        home = {
+          username = "dave";
+          homeDirectory = "/home/dave";
+          stateVersion = "26.05";
+        };
+        services.cadre = {
+          enable = true;
+          backend = "ollama";
+          agents.missing.harness = "amp-acp";
+        };
+      }
+    ];
+  };
 in
 pkgs.runCommand "cadre-home-manager" { } ''
   unit=${files}/home-files/.config/systemd/user/mesh-llm.service
@@ -95,6 +130,7 @@ pkgs.runCommand "cadre-home-manager" { } ''
   test "$(${files}/home-path/bin/cadre --version)" = "cadre 0.1.0"
   test -x ${files}/home-path/bin/goose
   test -x ${files}/home-path/bin/pi-acp
+  test -x ${files}/home-path/bin/amp-acp
   test -x ${files}/home-path/bin/review
   test -x ${files}/home-path/bin/braindump
   test -x ${files}/home-path/bin/berd
@@ -106,6 +142,11 @@ pkgs.runCommand "cadre-home-manager" { } ''
   test -f ${files}/home-files/.config/cadre/agents.json
   grep -q '@reviewer' ${files}/home-files/.config/cadre/agents.json
   grep -q 'pi-acp' ${files}/home-files/.config/cadre/agents.json
+  grep -q 'amp-acp' ${files}/home-files/.config/cadre/agents.json
+  grep -Eq '"model": *"Qwen3-Reviewer"' ${files}/home-files/.config/cadre/agents.json
+  grep -Eq '"model": *""' ${files}/home-files/.config/cadre/agents.json
+
+  test "${if !(builtins.tryEval hmMissingHarness).success then "1" else "0"}" = "1"
 
   # Goose custom provider provisioned declaratively (mesh.json left to runtime writer)
   test -f ${files}/home-files/.config/goose/custom_providers/cadre.json

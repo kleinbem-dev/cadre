@@ -25,7 +25,9 @@ let
     h:
     {
       goose = pkgs.goose-cli;
-      inherit (pkgs) buzz-agent pi-acp amp-acp;
+      buzz-agent = pkgs.buzz-agent or null;
+      pi-acp = pkgs.pi-acp or null;
+      amp-acp = pkgs.amp-acp or null;
     }
     .${h};
 
@@ -53,6 +55,30 @@ let
       };
     };
 
+  piModelsConfig =
+    agent:
+    (pkgs.formats.json { }).generate "pi-models.json" {
+      providers.cadre = {
+        inherit baseUrl;
+        api = "openai-completions";
+        apiKey = "cadre-local";
+        models = [
+          { id = agent.model; }
+        ]
+        ++ lib.optional (agent.model != "cadre") {
+          id = "cadre";
+        };
+      };
+    };
+
+  piSettingsConfig =
+    agent:
+    (pkgs.formats.json { }).generate "pi-settings.json" {
+      defaultProvider = "cadre";
+      defaultModel = agent.model;
+      quietStartup = true;
+    };
+
   agentModule = {
     options = {
       relayUrl = lib.mkOption {
@@ -69,6 +95,16 @@ let
           dedicated, throwaway identity for this bot, never your personal Nostr key.
           Because the ACP agent runs autonomously inside the service sandbox,
           tools executed by the agent share its user environment and could read the key.
+        '';
+      };
+
+      environmentFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.externalPath;
+        default = null;
+        example = "/run/secrets/buzz-amp.env";
+        description = ''
+          Optional systemd `EnvironmentFile` supplying harness credentials
+          (required with `AMP_API_KEY` when `harness = "amp-acp"`).
         '';
       };
 
@@ -164,8 +200,7 @@ let
       ]
       ++ lib.optional (cfg.backend == "mesh") "mesh-llm.service"
       ++ lib.optional (cfg.backend == "ollama") "ollama.service";
-      path = [
-        harnessPkg
+      path = lib.optional (harnessPkg != null) harnessPkg ++ [
         pkgs.buzz-cli
         pkgs.git
         pkgs.coreutils
@@ -176,7 +211,7 @@ let
         BUZZ_ACP_AGENT_COMMAND = agent.harness;
         # Non-goose ACP adapters read NDJSON directly on stdio without an `acp` subcommand.
         BUZZ_ACP_AGENT_ARGS = if agent.harness == "goose" then "acp" else "";
-        BUZZ_ACP_MODEL = agent.model;
+        BUZZ_ACP_MODEL = if agent.harness == "pi-acp" then "cadre/${agent.model}" else agent.model;
         BUZZ_ACP_SESSION_POLICY = agent.sessionPolicy;
         BUZZ_ACP_RESPOND_TO = agent.respondTo;
         GOOSE_TELEMETRY_OFF = "1";
@@ -206,6 +241,10 @@ let
       script = ''
         ${lib.optionalString (agent.harness == "goose") ''
           install -D -m 0644 ${agentProvider agent} "$HOME/.config/goose/custom_providers/cadre.json"
+        ''}
+        ${lib.optionalString (agent.harness == "pi-acp") ''
+          install -D -m 0644 ${piModelsConfig agent} "$HOME/.pi/agent/models.json"
+          install -D -m 0644 ${piSettingsConfig agent} "$HOME/.pi/agent/settings.json"
         ''}
         BUZZ_PRIVATE_KEY=$(< "$CREDENTIALS_DIRECTORY/key")
         export BUZZ_PRIVATE_KEY
@@ -248,6 +287,9 @@ let
           "~@privileged"
         ];
         UMask = "0077";
+      }
+      // lib.optionalAttrs (agent.environmentFile != null) {
+        EnvironmentFile = agent.environmentFile;
       };
     };
 in
@@ -271,10 +313,19 @@ in
   };
 
   config = lib.mkIf (cfg.enable && cfg.buzz.agents != { }) {
-    assertions = lib.mapAttrsToList (name: _: {
-      assertion = builtins.match "^[a-zA-Z0-9_-]+$" name != null;
-      message = "services.cadre.buzz.agents name '${name}' must match ^[a-zA-Z0-9_-]+$";
-    }) cfg.buzz.agents;
+    assertions =
+      (lib.mapAttrsToList (name: _: {
+        assertion = builtins.match "^[a-zA-Z0-9_-]+$" name != null;
+        message = "services.cadre.buzz.agents name '${name}' must match ^[a-zA-Z0-9_-]+$";
+      }) cfg.buzz.agents)
+      ++ (lib.mapAttrsToList (name: agent: {
+        assertion = harnessPkgFor agent.harness != null;
+        message = "services.cadre.buzz.agents.${name}: harness package '${agent.harness}' is unavailable (for unfree harnesses such as 'amp-acp', enable allowUnfree).";
+      }) cfg.buzz.agents)
+      ++ (lib.mapAttrsToList (name: agent: {
+        assertion = agent.harness != "amp-acp" || agent.environmentFile != null;
+        message = "services.cadre.buzz.agents.${name}: harness = \"amp-acp\" requires environmentFile (with AMP_API_KEY) because amp-acp authenticates against Amp rather than the local inference endpoint.";
+      }) cfg.buzz.agents);
 
     warnings = lib.concatLists (
       lib.mapAttrsToList (

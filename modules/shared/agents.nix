@@ -95,7 +95,6 @@ let
     {
       agents,
       defaultBackend,
-      defaultModel,
     }:
     lib.mapAttrsToList (
       id: agent:
@@ -111,7 +110,7 @@ let
           tools
           ;
         backend = if agent.backend != null then agent.backend else defaultBackend;
-        model = if agent.model != null then agent.model else defaultModel;
+        model = if agent.model != null then agent.model else "";
       }
       // lib.optionalAttrs (agent.systemPrompt != null) {
         inherit (agent) systemPrompt;

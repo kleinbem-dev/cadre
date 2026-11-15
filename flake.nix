@@ -50,7 +50,7 @@
 
         homeManagerModules = {
           default = import ./modules/home-manager/cadre.nix {
-            inherit (inputs.self) packages;
+            inherit (inputs.self) packages legacyPackages;
           };
           cadre = inputs.self.homeManagerModules.default;
         };
