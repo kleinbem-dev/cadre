@@ -37,7 +37,7 @@ let
       ];
     };
 
-    npmDepsHash = "sha256-QQzeKs3TAd1Oebu+g86+xr65hnLfcNcgLpbMNllzBMo=";
+    npmDepsHash = "sha256-UL5+xjcFcF6lUeji3mzl5HRoSacvFDpCjopnNrl96BM=";
     # pacote writes _cacache/tmp when unpacking git lockfile entries (@kleinbem/web-config).
     makeCacheWritable = true;
 
