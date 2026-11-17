@@ -1,20 +1,12 @@
 <script lang="ts">
 	import '../app.css';
 	import { onMount } from 'svelte';
-	import { theme } from '@kleinbem/web-config/theme/state';
 	import CommandPalette from '@kleinbem/web-config/components/CommandPalette';
 	import type { CommandItem } from '@kleinbem/web-config/components/CommandPalette';
 	import Header from '#lib/components/Header.svelte';
 	import { cadre } from '#lib/state.svelte.js';
 
 	let { children } = $props();
-
-	$effect(() => {
-		const active = theme.current;
-		document.documentElement.dataset.theme = active;
-		document.documentElement.classList.toggle('dark', active === 'dark');
-		document.documentElement.classList.toggle('light', active === 'light');
-	});
 
 	onMount(() => {
 		void cadre.refreshStatus();
