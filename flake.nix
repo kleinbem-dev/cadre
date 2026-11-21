@@ -39,6 +39,8 @@
                 ./modules/nixos/buzz-agents.nix
               ]
               ++ lib.optional (
+                # Workaround for NixOS/nixpkgs#571722 (https://github.com/NixOS/nixpkgs/pull/571722);
+                # remove this guard when nix-packages no longer exports mesh-llm.
                 inputs.nix-packages.nixosModules ? mesh-llm
                 && !(builtins.pathExists "${modulesPath}/services/misc/mesh-llm.nix")
               ) inputs.nix-packages.nixosModules.mesh-llm;
