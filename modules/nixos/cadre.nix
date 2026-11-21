@@ -8,12 +8,14 @@
 {
   config,
   lib,
+  options,
   pkgs,
   ...
 }:
 
 let
   cfg = config.services.cadre;
+  hasJoinTokenFile = options.services.mesh-llm ? joinTokenFile;
   agentsLib = import ../shared/agents.nix { inherit lib; };
 
   cadrePkg = pkgs.cadre.override {
@@ -206,22 +208,33 @@ in
         loadModels = lib.mkIf (cfg.models != [ ]) cfg.models;
       };
 
-      mesh-llm = lib.mkIf (cfg.backend == "mesh") {
-        enable = true;
-        inherit (cfg) package meshPort openFirewall;
-        settings = lib.mkIf (cfg.models != [ ]) {
-          version = 1;
-          models = map (model: { inherit model; }) cfg.models;
-        };
-        # The service's user can't read a file only root can, so systemd reads
-        # it as a credential.
-        extraArgs =
-          lib.optionals (cfg.joinFile != null) [
-            "--join-file"
-            "%d/join"
-          ]
-          ++ cfg.extraArgs;
-      };
+      mesh-llm = lib.mkIf (cfg.backend == "mesh") (
+        {
+          enable = true;
+          inherit (cfg) package meshPort openFirewall;
+          settings = lib.mkIf (cfg.models != [ ]) {
+            version = 1;
+            models = map (model: { inherit model; }) cfg.models;
+          };
+        }
+        // (
+          if hasJoinTokenFile then
+            {
+              joinTokenFile = cfg.joinFile;
+              inherit (cfg) extraArgs;
+            }
+          else
+            {
+              # Fallback module lacks joinTokenFile; systemd reads it as a credential.
+              extraArgs =
+                lib.optionals (cfg.joinFile != null) [
+                  "--join-file"
+                  "%d/join"
+                ]
+                ++ cfg.extraArgs;
+            }
+        )
+      );
     };
 
     networking.firewall.allowedTCPPorts = lib.mkIf (cfg.web.enable && cfg.web.openFirewall) [
@@ -236,7 +249,7 @@ in
 
       mesh-llm = lib.mkIf (cfg.backend == "mesh") {
         wantedBy = lib.mkIf (!cfg.autoStart) (lib.mkForce [ ]);
-        serviceConfig.LoadCredential = lib.mkIf (cfg.joinFile != null) [
+        serviceConfig.LoadCredential = lib.mkIf (!hasJoinTokenFile && cfg.joinFile != null) [
           "join:${cfg.joinFile}"
         ];
       };
