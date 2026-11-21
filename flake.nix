@@ -31,14 +31,19 @@
         overlays.default = import ./overlay.nix inputs;
 
         nixosModules = {
-          default = {
-            imports = [
-              inputs.nix-packages.nixosModules.mesh-llm
-              ./modules/nixos/cadre.nix
-              ./modules/nixos/buzz-agents.nix
-            ];
-            nixpkgs.overlays = [ inputs.self.overlays.default ];
-          };
+          default =
+            { lib, modulesPath, ... }:
+            {
+              imports = [
+                ./modules/nixos/cadre.nix
+                ./modules/nixos/buzz-agents.nix
+              ]
+              ++ lib.optional (
+                inputs.nix-packages.nixosModules ? mesh-llm
+                && !(builtins.pathExists "${modulesPath}/services/misc/mesh-llm.nix")
+              ) inputs.nix-packages.nixosModules.mesh-llm;
+              nixpkgs.overlays = [ inputs.self.overlays.default ];
+            };
           cadre = inputs.self.nixosModules.default;
         }
         // (
