@@ -1,0 +1,17 @@
+{
+	"extends": ["$app/tsconfig", "@kleinbem/web-config/tsconfig/svelte"],
+	"compilerOptions": {
+		"rootDirs": [
+			".",
+			"./.svelte-kit/types"
+		]
+	},
+	"include": [
+		"src",
+		"test",
+		"*"
+	],
+	"exclude": [
+		"src/service-worker"
+	]
+}
