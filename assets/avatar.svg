@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <radialGradient id="spark-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.35" />
+      <stop offset="100%" stop-color="#f59e0b" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="diamond-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+    <linearGradient id="frame-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#94a3b8" />
+      <stop offset="100%" stop-color="#475569" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="256" height="256" rx="52" fill="#0b0f19" />
+
+  <!-- Subtle glow behind the spark -->
+  <circle cx="128" cy="128" r="72" fill="url(#spark-glow)" />
+
+  <!-- Corner Brackets (The Cadre / Frame) -->
+  <!-- Top Left -->
+  <path d="M 56 88 L 56 64 A 8 8 0 0 1 64 56 L 88 56" fill="none" stroke="url(#frame-grad)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+  
+  <!-- Top Right -->
+  <path d="M 168 56 L 192 56 A 8 8 0 0 1 200 64 L 200 88" fill="none" stroke="url(#frame-grad)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+  
+  <!-- Bottom Right -->
+  <path d="M 200 168 L 200 192 A 8 8 0 0 1 192 200 L 168 200" fill="none" stroke="url(#frame-grad)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+  
+  <!-- Bottom Left -->
+  <path d="M 88 200 L 64 200 A 8 8 0 0 1 56 192 L 56 168" fill="none" stroke="url(#frame-grad)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- Center Diamond Spark (Autonomous Intelligence) -->
+  <polygon points="128,82 166,128 128,174 90,128" fill="url(#diamond-grad)" />
+
+  <!-- Inner Diamond Highlight for depth -->
+  <polygon points="128,96 154,128 128,160 102,128" fill="#fef3c7" opacity="0.3" />
+  <circle cx="128" cy="128" r="6" fill="#fff" opacity="0.9" />
+</svg>
